@@ -81,8 +81,13 @@ Uint8List toInstancedGlb(InstancedScene scene, {bool textures = false}) {
       }
 
       final uvByteOffset = byteOffset;
-      for (final v in prim.uvs) {
-        binaryBuffer.setFloat32(byteOffset, v, Endian.little);
+      // The scene's V runs up the image (SketchUp's convention, origin
+      // bottom-left); glTF's runs down from the top-left, so V is written as
+      // 1 - V. Written unchanged, as it used to be, every textured face was
+      // upside down in a conforming reader.
+      for (var uvIndex = 0; uvIndex < prim.uvs.length; uvIndex++) {
+        final value = prim.uvs[uvIndex];
+        binaryBuffer.setFloat32(byteOffset, uvIndex.isOdd ? 1.0 - value : value, Endian.little);
         byteOffset += 4;
       }
 

@@ -82,6 +82,9 @@ void main() {
       final uvOffset = uvBufferView['byteOffset'] as int;
       final bd = ByteData.sublistView(parsed.binary);
       expect(bd.getFloat32(uvOffset + 2 * 4, Endian.little), 1.0);
+      // V is written as 1 - V: the scene's runs up the image, glTF's down it.
+      expect(bd.getFloat32(uvOffset + 1 * 4, Endian.little), 1.0);
+      expect(bd.getFloat32(uvOffset + 5 * 4, Endian.little), 0.0);
 
       final materials = json['materials'] as List;
       final pbr = materials[0]['pbrMetallicRoughness'] as Map<String, dynamic>;
@@ -182,9 +185,11 @@ void main() {
           for (var j = 0; j < prim.uvs.length; j++) {
             final decoded = bd.getFloat32(uvOffset + j * 4, Endian.little);
             // prim.uvs is double (64-bit); the accessor stores float32,
-            // so compare against the same round-trip precision.
+            // so compare against the same round-trip precision. U is
+            // written as it is and V as 1 - V (glTF's V runs down the image).
+            final expectedUv = j.isOdd ? 1.0 - prim.uvs[j] : prim.uvs[j];
             final expectedRounded = (ByteData(4)
-                  ..setFloat32(0, prim.uvs[j], Endian.little))
+                  ..setFloat32(0, expectedUv, Endian.little))
                 .getFloat32(0, Endian.little);
             expect(decoded, expectedRounded);
           }

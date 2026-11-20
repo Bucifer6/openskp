@@ -214,7 +214,16 @@ namespace OpenSkp
                 byteOffset += prim.Normals.Length * 4;
 
                 var uvByteOffset = byteOffset;
-                Buffer.BlockCopy(prim.Uvs, 0, binaryBuffer, byteOffset, prim.Uvs.Length * 4);
+                // The scene's V runs up the image (SketchUp's convention,
+                // origin bottom-left); glTF's runs down from the top-left, so
+                // V is written as 1 - V. Copied unchanged, as it used to be,
+                // every textured face was upside down in a conforming reader.
+                var gltfUvs = new float[prim.Uvs.Length];
+                for (var uvIndex = 0; uvIndex < gltfUvs.Length; uvIndex++)
+                {
+                    gltfUvs[uvIndex] = (uvIndex & 1) == 1 ? 1f - prim.Uvs[uvIndex] : prim.Uvs[uvIndex];
+                }
+                Buffer.BlockCopy(gltfUvs, 0, binaryBuffer, byteOffset, gltfUvs.Length * 4);
                 byteOffset += prim.Uvs.Length * 4;
 
                 var indByteOffset = byteOffset;

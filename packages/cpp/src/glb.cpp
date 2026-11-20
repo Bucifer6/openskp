@@ -75,6 +75,22 @@ std::size_t append_values(ByteBuffer& buffer, const std::vector<T>& values, Appe
   return offset;
 }
 
+// Texture coordinates, in glTF's convention. The scene's are SketchUp's: V
+// runs up the image, (0, 0) at its bottom-left corner. glTF's V runs down
+// from the top-left, so V is written as 1 - V. Written unchanged, as they
+// used to be, every textured face showed its image upside down in a reader
+// that follows the specification.
+std::size_t append_uvs(ByteBuffer& buffer, const std::vector<float>& uvs) {
+  align_buffer(buffer);
+  check_binary_growth(buffer.size(), uvs.size(), sizeof(float));
+  const auto offset = buffer.size();
+  buffer.reserve(buffer.size() + uvs.size() * sizeof(float));
+  for (std::size_t index = 0; index < uvs.size(); ++index) {
+    append_f32(buffer, index % 2 == 1 ? 1.0F - uvs[index] : uvs[index]);
+  }
+  return offset;
+}
+
 int add_view(gltf::Model& model, std::size_t offset, std::size_t length, int target) {
   gltf::BufferView view;
   view.buffer = 0;
@@ -240,8 +256,7 @@ gltf::Model make_model(const Scene& scene, bool embed_textures) {
     const auto normal_accessor = add_accessor(model, normal_view, source.normals.size() / 3,
                                               TINYGLTF_COMPONENT_TYPE_FLOAT, TINYGLTF_TYPE_VEC3);
 
-    const auto uv_offset = append_values(
-        binary, source.uvs, [](ByteBuffer& bytes, float value) { append_f32(bytes, value); });
+    const auto uv_offset = append_uvs(binary, source.uvs);
     const auto uv_view =
         add_view(model, uv_offset, source.uvs.size() * 4, TINYGLTF_TARGET_ARRAY_BUFFER);
     const auto uv_accessor = add_accessor(model, uv_view, source.uvs.size() / 2,
