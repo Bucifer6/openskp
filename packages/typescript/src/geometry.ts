@@ -33,6 +33,43 @@ export interface GeometryBuilderFace {
   uvProjected?: boolean;
   uvProjectedBack?: boolean;
   hidden?: boolean;
+  /** Raw id of the layer (tag) the face itself is drawn on, resolved
+   * through `layerIdToName`. Null/absent when the face is on the default
+   * layer, in which case it takes the layer of whatever places it. */
+  layerId?: number | null;
+}
+
+/**
+ * The layer most of a definition's own faces are drawn on, or undefined
+ * when none of them carries one (all on the default layer).
+ *
+ * A face has a layer of its own, independent of the instance that places
+ * it: geometry drawn on "Roof" stays on "Roof" inside a component that is
+ * itself untagged. Both scene builders emit one layer per definition's
+ * meshes, so they use the dominant one - the same rule the Python scene
+ * builder applies. Ties go to the layer seen first, in face order.
+ */
+export function dominantFaceLayerName(
+  faces: Map<number, GeometryBuilderFace>,
+  layerIdToName: Map<number, string>
+): string | undefined {
+  let counts: Map<number, number> | undefined;
+  for (const face of faces.values()) {
+    const id = face.layerId;
+    if (!id) continue;
+    if (!counts) counts = new Map();
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  if (!counts) return undefined;
+  let best: number | undefined;
+  let bestCount = 0;
+  for (const [id, n] of counts) {
+    if (n > bestCount) {
+      best = id;
+      bestCount = n;
+    }
+  }
+  return best === undefined ? undefined : layerIdToName.get(best);
 }
 
 /** The analytic frame of a Curve that is one arc: the points
@@ -327,11 +364,18 @@ export function extractGeometryFromNodes(
         let uvFront: number[] | null = null;
         let uvBack: number[] | null = null;
         let faceHidden = false;
+        let faceLayerId: number | null = null;
         const d007 = el.children.find((c) => c.tag === 'D007');
         if (d007) {
           const d107 = d007.children.find((c) => c.tag === 'D107');
           if (d107) {
             faceMatId = parseVarInt(d107.payload, 0, d107.payload.length);
+          }
+          // D207 = the face's own layer id, the same tag an instance
+          // carries its layer in.
+          const d207 = d007.children.find((c) => c.tag === 'D207');
+          if (d207 && d207.payload.length > 0) {
+            faceLayerId = parseVarInt(d207.payload, 0, d207.payload.length);
           }
           const dc05 = d007.children.find((c) => c.tag === 'DC05');
           if (dc05) {
@@ -362,6 +406,7 @@ export function extractGeometryFromNodes(
           uvTransform: uvFront,
           uvTransformBack: uvBack,
           hidden: faceHidden,
+          layerId: faceLayerId,
         });
       }
     } else if (tag === '6419') {

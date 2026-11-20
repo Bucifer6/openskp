@@ -68,7 +68,9 @@ released. ❌ = not yet ported to that language; see
 | Legacy (pre-2021) pages/scenes reading | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Construction lines/points reading | ✅ legacy + VFF | ✅ legacy + VFF | ✅ legacy + VFF | ✅ legacy + VFF | ✅ legacy + VFF |
 | VFF per-layer-hidden flag reading | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Per-edge/per-face layer, `Edge#curve` pointers, classic `CArcCurve` frames (legacy + VFF) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Per-face layer (`Face.layer`), used by the scene builders for a definition's meshes (legacy + VFF) | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Per-edge layer (legacy + VFF) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Tags with a line style in SketchUp 2019/2020 files (`CCustomLineStyle`) | ✅ | ✅ | not checked | not checked | not checked |
 | `mesh_index[...].properties` populated | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `model.layers` in file order (not alphabetical) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Scene building & observability** | | | | | |
@@ -123,7 +125,9 @@ path's own output.
 |:---|:---|:---|
 | `build_instanced_scene()` loose-edge curve support + public typed-model `Edge.layer`/`Face.layer`/`loose_edge_runs()` | `_curves.py`, `instanced_scene.py`, `model.py` | TypeScript, .NET, Dart, C++ — none started |
 | IFC export: loose-edge curve sets + analytic arcs as `IfcAnnotation`/`IfcIndexedPolyCurve`, plus the 4 IFC4 STEP-conformance fixes | `scene.py`, `export/ifc.py` | TypeScript, .NET, Dart, C++ — none started |
-| Per-edge/per-face layer | `legacy.py`/`_core.py` | TypeScript, .NET, Dart, C++ |
+| Per-face layer | `legacy.py`/`_core.py`, TypeScript `legacy.ts`/`geometry.ts` | .NET, Dart, C++ |
+| Per-edge layer | `legacy.py`/`_core.py` | TypeScript, .NET, Dart, C++ |
+| A tag's line style (`CCustomLineStyle`, SketchUp 2019/2020) | `legacy.py`, TypeScript `legacy.ts` | .NET, Dart, C++ — not checked |
 | Attribute dicts: full 9-value-type decoding for VFF (2021+) format (Python: 7/9, others: string-only) — not independently re-verified this cycle for TS/.NET/Dart/C++, carried over from the prior version of this page rather than asserted fresh | `_core.py` | TypeScript, .NET, Dart, C++ — status needs a fresh check |
 
 All tracked in [issue #285](https://github.com/iamahsanmehmood/openskp/issues/285).
