@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — TypeScript: mirrored placements were inside out in the baked scene
+
+- `buildScene` transformed a mirrored instance's vertices (a negative-determinant transform: a
+  car's left door drawn as the right one flipped) but kept the triangles' corner order, so every
+  baked triangle of it faced away from its own normals. A viewer culling back faces showed the
+  other side: with a one-sided material (a face painted differently on each side) the wrong paint,
+  on a third of a 3D Warehouse car's triangles. The corners are now swapped for such placements,
+  as glTF readers do for the instanced scene's mirrored nodes; the parity tests' flattening of the
+  instanced scene does the same. Measured on a real 155 MB model: triangles disagreeing with their
+  normals went from 374,184 to 1,134 (all at smoothed edges).
+
 ### Fixed — TypeScript, .NET, Dart, C++, Rust: textures in exported GLB files were upside down
 ### Added — TypeScript: `defaultFaceColor` scene option
 
