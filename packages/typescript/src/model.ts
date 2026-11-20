@@ -1099,11 +1099,19 @@ export function buildSceneFromParsed(
           }
         }
 
+        // A mirrored placement (a negative determinant: the left door of a car drawn as the right
+        // one flipped) turns the triangles inside out once baked, while the normals above stay
+        // right; swapping two corners puts each triangle back facing the way its normals do, as a
+        // glTF reader does for the instanced scene's mirrored nodes. Without it a one-sided
+        // material showed its back side to the viewer (back-face culling uses the corner order).
+        const m = currentMatrix;
+        const mirrored =
+          m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]) < 0;
         const indices = new Uint32Array(group.localFaces.length * 3);
         for (let i = 0; i < group.localFaces.length; i++) {
           indices[i * 3] = group.localFaces[i][0];
-          indices[i * 3 + 1] = group.localFaces[i][1];
-          indices[i * 3 + 2] = group.localFaces[i][2];
+          indices[i * 3 + 1] = group.localFaces[i][mirrored ? 2 : 1];
+          indices[i * 3 + 2] = group.localFaces[i][mirrored ? 1 : 2];
         }
 
         const materialIndex = getMaterialIndex(group.color, group.doubleSided, group.textureIndex, group.transparency);

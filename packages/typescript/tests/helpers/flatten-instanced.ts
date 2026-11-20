@@ -56,6 +56,10 @@ export function flattenInstancedScene(scene: InstancedScene): FlatTriangle[] {
 
   const visit = (node: InstancedNode, parentMatrix: number[]) => {
     const world = multiply4(parentMatrix, node.matrix);
+    // glTF: a node whose transform has a negative determinant is drawn with its triangles' corner
+    // order reversed (a mirrored placement), as the baked scene now writes them
+    const w = world;
+    const mirrored = w[0] * (w[5] * w[10] - w[6] * w[9]) - w[4] * (w[1] * w[10] - w[2] * w[9]) + w[8] * (w[1] * w[6] - w[2] * w[5]) < 0;
 
     if (node.meshResourceId !== undefined) {
       const res = byId.get(node.meshResourceId);
@@ -75,8 +79,8 @@ export function flattenInstancedScene(scene: InstancedScene): FlatTriangle[] {
             }
             out.push({
               a: tri[0],
-              b: tri[1],
-              c: tri[2],
+              b: tri[mirrored ? 2 : 1],
+              c: tri[mirrored ? 1 : 2],
               materialIndex: prim.materialIndex,
             });
           }
