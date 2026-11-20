@@ -1,4 +1,5 @@
 import { transformPoint, multiplyMatrices } from './transforms';
+import { convertTextureToPng } from './image-convert';
 import { dominantFaceLayerName, extractDynamicProperties, extractAttributeDictionaries, isGenericDefinitionName, findNameOverride, stringifyVffAttrValue, ParsedDefinition, VffAttrValue } from './geometry';
 import { buildLocalFaceGroups } from './face-groups';
 import { SkpParseError } from './errors';
@@ -352,6 +353,8 @@ export interface Material {
 }
 
 export interface InstanceNode {
+  /** This placement's number, unique within the scene (see MeshMetadata.placementIds). */
+  placementId?: number;
   name: string;
   /** Whether `name` is a synthetic fallback (SketchUp's own internal
    * index, e.g. "Component_5") rather than a real name from the source
@@ -386,6 +389,15 @@ export interface MeshMetadata {
   /** See InstanceNode.attributeDictionaries. */
   attributeDictionaries: Record<string, Record<string, string>>;
   path: string;
+  /**
+   * The placements this mesh sits in, outermost first: each one's
+   * {@link InstanceNode.placementId}. Unlike `path`, which names a placement
+   * by its instance or definition name, these tell two placements of the
+   * same component apart (two identical chairs share a path but not these),
+   * so a viewer can pick, highlight or move one placed object on its own.
+   * Empty for geometry drawn at the model's root.
+   */
+  placementIds: number[];
 }
 
 /** One triangulated, world-space mesh: all faces (or, for a face whose
@@ -497,6 +509,19 @@ export interface SceneOptions {
    * Off by default: a viewer wants each side's own colour.
    */
   frontSideOnly?: boolean;
+  /**
+   * The colour of a face with no material of its own (and none inherited from
+   * a painted group or component), instead of its layer's (tag's) colour.
+   *
+   * SketchUp draws such faces in its default front colour (white) unless the
+   * style has "Color by tag" on, so a viewer that wants the model to look as
+   * it does in SketchUp passes `{ r: 255, g: 255, b: 255 }`. A model from the
+   * 3D Warehouse whose parts are unpainted otherwise comes out in the tag's
+   * colour (often a saturated red or pink for Layer0).
+   *
+   * Unset by default: every face then takes its layer's colour, as before.
+   */
+  defaultFaceColor?: { r: number; g: number; b: number };
 }
 
 /**
@@ -864,18 +889,40 @@ export function buildSceneFromParsed(
   const textures: SceneTexture[] = [];
   const textureIndexByKey = new Map<string, number>();
 
+  const textureIndexByObject = new Map<Texture, number | null>();
+
   function textureIndexFor(tex: Texture | null | undefined): number | null {
     if (!tex || !tex.data || tex.data.length === 0) return null;
-    const mimeType = sniffImageMime(tex.data);
-    if (mimeType === null) return null; // a format glTF cannot carry
+    // Asked once per face side; the answer for a given texture never
+    // changes, and working it out builds a string from the image bytes.
+    const known = textureIndexByObject.get(tex);
+    if (known !== undefined) return known;
+    const index = textureIndexUncached(tex, tex.data);
+    textureIndexByObject.set(tex, index);
+    return index;
+  }
+
+  function textureIndexUncached(tex: Texture, data: Uint8Array): number | null {
     // length plus a short byte prefix is enough to tell real images apart
     // without hashing megabytes on every face
-    const head = Array.from(tex.data.subarray(0, 16)).join(',');
-    const key = `${tex.data.length}:${head}`;
+    const head = Array.from(data.subarray(0, 16)).join(',');
+    const key = `${data.length}:${head}`;
     const hit = textureIndexByKey.get(key);
     if (hit !== undefined) return hit;
+
+    let image = data;
+    let mimeType = sniffImageMime(data);
+    if (mimeType === null) {
+      // Not PNG or JPEG, which is all glTF and browsers carry. A TIFF is
+      // re-encoded as PNG so the material keeps its image; anything else
+      // keeps its flat colour.
+      const converted = convertTextureToPng(data);
+      if (converted === null) return null;
+      image = converted;
+      mimeType = 'image/png';
+    }
     const idx = textures.length;
-    textures.push({ data: tex.data, mimeType, filename: tex.filename });
+    textures.push({ data: image, mimeType, filename: tex.filename });
     textureIndexByKey.set(key, idx);
     return idx;
   }
@@ -951,7 +998,8 @@ export function buildSceneFromParsed(
     currentMatrix: number[],
     parentLayer: string = 'Layer0',
     pathName: string = 'ROOT',
-    inheritedMaterial?: Material
+    inheritedMaterial?: Material,
+    placementIds: number[] = []
   ): InstanceNode[] {
     const d = defsDict.get(defId);
     if (!d) return [];
@@ -986,7 +1034,7 @@ export function buildSceneFromParsed(
           resolveMaterialFromMaps(matId, materialIdToName, materialsMap, materialsByFolder),
         textureIndexFor,
         inheritedMaterial,
-        fallbackLayerColor: getLayerColor(meshLayer),
+        fallbackLayerColor: options?.defaultFaceColor ?? getLayerColor(meshLayer),
         definitionId: defId,
         respectVisibility: options?.respectEdgeVisibility,
         frontSideOnly: options?.frontSideOnly,
@@ -1018,6 +1066,7 @@ export function buildSceneFromParsed(
           properties: {},
           attributeDictionaries: {},
           path: pathName,
+          placementIds,
         };
 
         const scale = 0.0254;
@@ -1071,11 +1120,19 @@ export function buildSceneFromParsed(
           }
         }
 
+        // A mirrored placement (a negative determinant: the left door of a car drawn as the right
+        // one flipped) turns the triangles inside out once baked, while the normals above stay
+        // right; swapping two corners puts each triangle back facing the way its normals do, as a
+        // glTF reader does for the instanced scene's mirrored nodes. Without it a one-sided
+        // material showed its back side to the viewer (back-face culling uses the corner order).
+        const m = currentMatrix;
+        const mirrored =
+          m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]) < 0;
         const indices = new Uint32Array(group.localFaces.length * 3);
         for (let i = 0; i < group.localFaces.length; i++) {
           indices[i * 3] = group.localFaces[i][0];
-          indices[i * 3 + 1] = group.localFaces[i][1];
-          indices[i * 3 + 2] = group.localFaces[i][2];
+          indices[i * 3 + 1] = group.localFaces[i][mirrored ? 2 : 1];
+          indices[i * 3 + 2] = group.localFaces[i][mirrored ? 1 : 2];
         }
 
         const materialIndex = getMaterialIndex(group.color, group.doubleSided, group.textureIndex, group.transparency);
@@ -1144,6 +1201,7 @@ export function buildSceneFromParsed(
       const instName = inst.name || `Component_${refIdx}`;
       const fullPathName = `${pathName} / ${instName}`;
       instanceCounter.count++;
+      const placementId = instanceCounter.count;
       if (instanceCounter.count % PROGRESS_INTERVAL === 0) {
         emitProgress(options, 'build_scene', instanceCounter.count, instanceCounter.count);
         emitLog(options, 'debug', `Processed ${instanceCounter.count} placed instances`);
@@ -1155,7 +1213,7 @@ export function buildSceneFromParsed(
         });
       }
       activeDefinitions.add(refIdx);
-      const childNodes = instantiate(refIdx, newMatrix, lName, fullPathName, instMaterial);
+      const childNodes = instantiate(refIdx, newMatrix, lName, fullPathName, instMaterial, [...placementIds, placementId]);
       activeDefinitions.delete(refIdx);
 
       const tx = (newMatrix[9] ?? 0) * 25.4;
@@ -1196,6 +1254,7 @@ export function buildSceneFromParsed(
       }
 
       const instInfo: InstanceNode = {
+        placementId,
         name: displayName,
         nameIsGenerated,
         definitionName: childDefName,

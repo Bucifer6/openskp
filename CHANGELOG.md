@@ -33,6 +33,126 @@ agree on 93 of 95 (the other two differ only in how the same surfaces are split 
   the record a 2021+ instance carries. In a classic (pre-2021) file a painted component kept its
   unpainted faces in the default colour, and every placement reported "Layer0" whatever tag it was
   on. Both builders now use the ids the classic walker already reads. TypeScript already did.
+### Added — TypeScript: placement ids in the baked scene
+
+- `MeshMetadata.placementIds` lists the placements a baked mesh sits in, outermost first, and
+  `InstanceNode.placementId` gives each placement its number. A mesh's `path` names placements by
+  instance or definition name, so two placements of the same component (two identical chairs)
+  shared one path and a viewer could not pick, highlight or move one of them alone.
+
+### Fixed — TypeScript: mirrored placements were inside out in the baked scene
+
+- `buildScene` transformed a mirrored instance's vertices (a negative-determinant transform: a
+  car's left door drawn as the right one flipped) but kept the triangles' corner order, so every
+  baked triangle of it faced away from its own normals. A viewer culling back faces showed the
+  other side: with a one-sided material (a face painted differently on each side) the wrong paint,
+  on a third of a 3D Warehouse car's triangles. The corners are now swapped for such placements,
+  as glTF readers do for the instanced scene's mirrored nodes; the parity tests' flattening of the
+  instanced scene does the same. Measured on a real 155 MB model: triangles disagreeing with their
+  normals went from 374,184 to 1,134 (all at smoothed edges).
+
+### Fixed — TypeScript, .NET, Dart, C++, Rust: textures in exported GLB files were upside down
+### Added — TypeScript: `defaultFaceColor` scene option
+
+- A face with no material of its own (and none inherited from a painted group or component) took
+  its layer's colour in `buildScene`/`buildInstancedScene`. SketchUp only draws it that way with
+  "Color by tag" on; normally it is the default white, so unpainted models (often a car or a
+  person from the 3D Warehouse) came out in the tag's colour, frequently a saturated red or pink
+  for Layer0. `{ defaultFaceColor: { r: 255, g: 255, b: 255 } }` draws them as SketchUp does.
+  Unset, nothing changes. The instanced scene keys its mesh resources on the same colour, so
+  placements on differently coloured layers share one resource again when it is set.
+
+### Fixed — TypeScript: textures in exported GLB files were upside down
+
+- The GLB writers in these five ports wrote texture coordinates as the scene holds them, in
+  SketchUp's convention (V runs up the image, origin bottom-left). glTF's V runs down from the
+  top-left, so every textured face showed its image vertically flipped in a reader that follows
+  the specification. A tiling wood or brick hides that; a label, a poster or a sign does not. V
+  is now written as `1 - V`, in both the baked and the instanced GLB of each port. Scene data
+  (`GlbPrimitive.uvs`, `LocalPrimitive.uvs` and their equivalents) is unchanged.
+- Python was already right - it exports through trimesh, which makes this conversion itself -
+  and is what the others were checked against: a wall textured bottom-to-top comes out of the
+  Python exporter with V = 0 at its top edge, as it now does from the TypeScript one.
+
+### Fixed — TypeScript: file helpers threw under `import`
+
+- `SkpFile.open`, `exportOBJ`, `exportSTL`, `exportPLY`, `exportDXF`, `exportIFC`,
+  `SkpBuilder.save` and `openExisting(path)` called a bare `require('fs')`, which does not exist
+  in the ES module build: each threw `Dynamic require of "fs" is not supported` when the package
+  was loaded with `import`, which is how the README tells Node users to load it. They now use
+  `process.getBuiltinModule`, which works from both `import` and `require`.
+
+### Fixed — TypeScript: TIFF textures were dropped
+
+- A material whose image is a TIFF lost it in `buildScene`/`buildInstancedScene` and fell back to
+  a flat colour, because glTF and browsers carry PNG and JPEG only. Common TIFFs (8/16-bit
+  greyscale, RGB, RGBA or palette; uncompressed, LZW, Deflate or PackBits; strips or tiles) are
+  now decoded and handed on as PNG, capped at 2048 pixels a side. `parseSkp` still reports the
+  image exactly as stored. JPEG-in-TIFF and CMYK are not read and keep the flat colour.
+
+### Changed — TypeScript: reading a file is 3-4x faster
+
+Measured on a real 120 MB SketchUp 2022 model (1,398 definitions, 2.3 M triangles placed), Node 24:
+
+| | Before | After |
+|:---|---:|---:|
+| `parseSkp` | 21 s, 2.4 GB | 8.6 s |
+| `buildInstancedScene` | 25 s | 10.8 s |
+| model + scene for a viewer | 46 s (two reads) | 11 s (`loadSkp`, one read) |
+| `extractThumbnail` | 1.6 s, 555 MB | 0.2 s |
+
+Output is unchanged: the instanced and baked scenes, pages and dimensions are byte-for-byte
+identical on every fixture and on the model above.
+
+- The TLV reader no longer allocates a `DataView` per integer, a string per tag or a `Uint8Array`
+  view per record (a record's `payload` is now created when first read).
+- The scene builder keyed vertices and smoothing groups by formatted strings; it now compares
+  numbers.
+- The per-vertex and per-instance lookup tables that place dimensions are only built when the
+  file has a dimension attached to geometry.
+- `extractThumbnail` decompresses the thumbnail entries only, not the whole container.
+
+### Added — TypeScript
+
+- **`simplifyInstancedScene(scene, { detail })`** returns a lighter copy of an instanced scene for
+  viewing: dense components are reduced by vertex clustering to a tolerance, and (below `'high'`)
+  very small objects are left out. Presets `'high'`, `'medium'`, `'low'`, or explicit
+  `tolerance`/`minObjectSize` in metres. On the model above: 2.31 M triangles to 1.07 M (medium)
+  or 0.62 M (low) in 0.3 s, and the GLB without textures from 48.7 MB to 7.9 MB or 5.2 MB. Plain
+  architecture is left exactly as modelled, a reduced component is reduced once for all its
+  placements, and a thin part is reduced less rather than lost. Not a quality-preserving
+  decimator - see its documentation for what it does not do.
+- **`loadSkp(buffer)`** / `SkpFile.load()`: the model and the instanced scene from one read of the
+  file, for viewers that need both.
+- **`openskp` command line** (`npx openskp`): `info`, `convert` (to glb, obj, stl, ply, dxf, ifc,
+  json or frag, with `--detail` for a lighter GLB) and `thumbnail`.
+- **`openskp/browser`** (`dist/openskp.browser.mjs`): one self-contained ES module with its
+  dependencies included, loadable from a CDN, and inside a Web Worker - where an import map does
+  not apply.
+- Every entry point accepts a `Uint8Array` or Node `Buffer` as well as an `ArrayBuffer`, without
+  copying it. `SkpFile.open` no longer holds two copies of the file.
+- `SkpFile.openAsync`, `SkpFile.toGLB` (instanced by default, optional `detail`) and
+  `SkpFile.exportGLB`.
+- `decodeTiff`, `encodePng`, `convertTextureToPng`.
+
+### Changed — Web viewer
+
+- **Reading runs in a Web Worker.** The page no longer freezes while a model loads: it shows
+  progress and can cancel. The 120 MB model above opens in about 7 s; before, the page read the
+  file twice on its own thread and was frozen throughout (the same work takes about 55 s in Node).
+- **Detail levels** (Auto, Full, High, Balanced, Light). Auto keeps a model as it is up to a
+  million triangles and reduces it beyond that. Changing level takes about a second and keeps the
+  camera where it is. Textures are decoded in the worker and shrunk at the lighter levels.
+- **Far fewer draw calls.** Components placed many times are drawn instanced; components placed
+  once are merged per material. The same model takes about 240 draw calls.
+- **GLB export writes what is on screen** - the current detail level, with textures - and **the
+  viewer opens `.glb` files**, so a model exported once at a light level (10 MB for the model
+  above) reopens in a fraction of a second.
+- Layers the author switched off start switched off, and hiding a group's layer hides what is
+  inside it. Hidden objects are not drawn. Transparent and cutout materials follow the material.
+- The view is redrawn when something changes rather than 60 times a second. Shadows are fitted to
+  the model and turned off above 400,000 triangles.
+- Exports run in the worker too. Errors are shown in the page instead of an `alert`.
 
 ### Fixed — TypeScript: GLB files with non-ASCII names are 4-byte aligned again
 

@@ -1,7 +1,6 @@
+import { writeFileEnsuringDir } from './node-io';
 import { SkpScene } from './model';
 
-declare const process: any;
-declare const require: any;
 
 function calculateNormal(
   v0: [number, number, number],
@@ -188,25 +187,11 @@ export function exportSTL(
   outputPath: string,
   options?: { binary?: boolean; scale?: number }
 ): void {
-  if (typeof process !== 'undefined' && process.versions && process.versions.node) {
-    const fs = require('fs');
-    const path = require('path');
-    const binary = options?.binary ?? false;
-    const scale = options?.scale ?? 1.0;
-
-    const dir = path.dirname(outputPath);
-    if (dir && !fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    if (binary) {
-      const data = toSTLBinary(scene, scale);
-      fs.writeFileSync(outputPath, data);
-    } else {
-      const text = toSTLAscii(scene, scale);
-      fs.writeFileSync(outputPath, text, 'utf-8');
-    }
-  } else {
-    throw new Error('exportSTL file writing is only supported in Node.js environment');
-  }
+  const binary = options?.binary ?? false;
+  const scale = options?.scale ?? 1.0;
+  writeFileEnsuringDir(
+    outputPath,
+    binary ? toSTLBinary(scene, scale) : toSTLAscii(scene, scale),
+    'exportSTL file writing'
+  );
 }

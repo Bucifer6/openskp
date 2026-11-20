@@ -1,7 +1,6 @@
+import { writeFileEnsuringDir } from './node-io';
 import { SkpScene } from './model';
 
-declare const process: any;
-declare const require: any;
 
 // 1 metre = 39.37007874015748 inches (SketchUp native unit)
 export const METRES_TO_INCHES = 39.37007874015748;
@@ -555,18 +554,5 @@ export function exportDXF(
   scale: number = METRES_TO_INCHES,
   mode: '3dface' | 'polyface' = 'polyface'
 ): void {
-  if (typeof process !== 'undefined' && process.versions && process.versions.node) {
-    const fs = require('fs');
-    const path = require('path');
-
-    const dir = path.dirname(outputPath);
-    if (dir && !fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    const text = toDXF(scene, scale, mode);
-    fs.writeFileSync(outputPath, text, 'utf-8');
-  } else {
-    throw new Error('exportDXF file writing is only supported in Node.js environment');
-  }
+  writeFileEnsuringDir(outputPath, toDXF(scene, scale, mode), 'exportDXF file writing');
 }

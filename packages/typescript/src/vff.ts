@@ -181,7 +181,9 @@ function validateEntrySize(file: UnzipFileInfo): void {
   }
 }
 
-export function extractSkpContents(data: Uint8Array, options?: ParseOptions): SkpContents {
+/** Where the embedded ZIP archive starts, after checking the file is one
+ * this reader understands. */
+function locateZip(data: Uint8Array): Uint8Array {
   // Allow both VFF-wrapped and bare ZIP (some exporters omit the header)
   if (!validateHeader(data)) {
     const zipInHeader = findSequence(data.subarray(0, Math.min(64, data.length)), ZIP_LOCAL_HEADER) >= 0;
@@ -189,10 +191,50 @@ export function extractSkpContents(data: Uint8Array, options?: ParseOptions): Sk
       throw new Error('Not a valid SketchUp (.skp) file');
     }
   }
+  return data.subarray(findZipOffset(data));
+}
 
+function unzipFiltered(zipBytes: Uint8Array, filter: (file: UnzipFileInfo) => boolean): Record<string, Uint8Array> {
+  try {
+    return unzipSync(zipBytes, { filter });
+  } catch (e) {
+    // The Error constructor's `cause` option is an ES2022 addition not covered
+    // by this package's ES2020 lib target; set it manually instead - it's a
+    // real runtime feature regardless (Node 16.9+ and all current browsers).
+    const wrapped = new Error('Failed to decompress ZIP archive: ' + (e as Error).message);
+    (wrapped as Error & { cause?: unknown }).cause = e;
+    throw wrapped;
+  }
+}
+
+/**
+ * Decompress only the named entries of a `.skp` container, keyed by their
+ * (decoded) entry name. Entries the file does not have are simply absent.
+ *
+ * For readers that want one small thing from a large file - the stored
+ * thumbnail, say. {@link extractSkpContents} inflates model.dat and every
+ * texture, which on a real 126 MB model is over a second and several
+ * hundred megabytes spent to return a 60 KB image.
+ *
+ * @param names - Entry names to read, compared case-insensitively
+ */
+export function extractSkpEntries(data: Uint8Array, names: readonly string[]): Record<string, Uint8Array> {
+  const wantedNames = new Set(names.map((n) => n.toLowerCase()));
+  const unzipped = unzipFiltered(locateZip(data), (file) => {
+    const isWanted = wantedNames.has(decodeEntryName(file.name).toLowerCase());
+    if (isWanted) validateEntrySize(file);
+    return isWanted;
+  });
+  const out: Record<string, Uint8Array> = {};
+  for (const rawEntry of Object.keys(unzipped)) {
+    out[decodeEntryName(rawEntry)] = unzipped[rawEntry];
+  }
+  return out;
+}
+
+export function extractSkpContents(data: Uint8Array, options?: ParseOptions): SkpContents {
+  const zipBytes = locateZip(data);
   const version = readVersion(data, options);
-  const zipOffset = findZipOffset(data);
-  const zipBytes = data.subarray(zipOffset);
 
   // Only decompress entries we actually consume - a ZIP full of unrelated
   // large assets (the file's own thumbnails, etc.) would otherwise get
@@ -213,17 +255,7 @@ export function extractSkpContents(data: Uint8Array, options?: ParseOptions): Sk
     return isWanted;
   };
 
-  let unzipped: Record<string, Uint8Array>;
-  try {
-    unzipped = unzipSync(zipBytes, { filter: wanted });
-  } catch (e) {
-    // The Error constructor's `cause` option is an ES2022 addition not covered
-    // by this package's ES2020 lib target; set it manually instead - it's a
-    // real runtime feature regardless (Node 16.9+ and all current browsers).
-    const wrapped = new Error('Failed to decompress ZIP archive: ' + (e as Error).message);
-    (wrapped as Error & { cause?: unknown }).cause = e;
-    throw wrapped;
-  }
+  const unzipped = unzipFiltered(zipBytes, wanted);
 
   let modelData: Uint8Array | null = null;
   let metaData: Uint8Array | null = null;

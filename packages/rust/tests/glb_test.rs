@@ -112,6 +112,9 @@ fn serializes_scene_and_binary_data() {
     assert_eq!(string(uvs, "type"), "VEC2");
     assert_eq!(int(uvs, "count"), 3);
     assert_eq!(model.f32_at(uvs, 2), 1.0);
+    // V is written as 1 - V: the scene's runs up the image, glTF's down it.
+    assert_eq!(model.f32_at(uvs, 1), 1.0);
+    assert_eq!(model.f32_at(uvs, 5), 0.0);
 
     let indices = model.accessor(int(primitive, "indices"));
     assert_eq!(int(indices, "componentType"), 5125);

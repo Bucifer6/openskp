@@ -33,8 +33,19 @@ export interface LocalFaceGroup {
    * (see {@link smoothCornerNormals}). */
   normalsAccum: number[][];
   localFaces: number[][];
-  localVMap: Map<string, number>;
+  /** Source vertex id -> the output vertices already made from it. One
+   * source vertex becomes several output vertices when the faces around it
+   * disagree on UV or on which smoothed surface they belong to; the list
+   * is searched for one that matches before a new one is added. */
+  vertexIndex: Map<number, number[]>;
+  /** Per output vertex: the smoothed surface it belongs to, or -1. */
+  smoothRoots: number[];
   textureIndex: number | null;
+}
+
+/** Equality as `${a}` === `${b}` had it: NaN equals NaN. */
+function sameNumber(a: number, b: number): boolean {
+  return a === b || (a !== a && b !== b);
 }
 
 /** Everything the grouping needs from its caller that isn't the builder
@@ -62,7 +73,7 @@ export interface FaceGroupContext {
 /** A corner (vertex of one face) on a smoothed surface: the surface it
  * belongs to and that surface's unit normal at the vertex. */
 interface SmoothCorner {
-  root: string;
+  root: number;
   n: [number, number, number];
 }
 
@@ -99,18 +110,32 @@ function smoothCornerNormals(
   }
   if (edgeFaces.size === 0) return null;
 
-  const parent = new Map<string, string>();
-  const touch = (key: string): string => {
-    if (!parent.has(key)) parent.set(key, key);
-    return key;
+  // Corners are numbered as they are first seen and the union-find runs
+  // over those numbers. Keying it by a "vertex:face" string, as this used
+  // to, built and hashed a string for every corner of every face on every
+  // lookup - a large share of the time spent building a curved model.
+  const cornerIndex = new Map<number, Map<number, number>>();
+  const parent: number[] = [];
+  const cornerFace: number[] = [];
+  const touch = (vId: number, fId: number): number => {
+    let byFace = cornerIndex.get(vId);
+    if (!byFace) cornerIndex.set(vId, (byFace = new Map()));
+    let index = byFace.get(fId);
+    if (index === undefined) {
+      index = parent.length;
+      parent.push(index);
+      cornerFace.push(fId);
+      byFace.set(fId, index);
+    }
+    return index;
   };
-  const find = (key: string): string => {
-    let root = key;
-    while (parent.get(root) !== root) root = parent.get(root)!;
-    while (parent.get(key) !== root) {
-      const next = parent.get(key)!;
-      parent.set(key, root);
-      key = next;
+  const find = (index: number): number => {
+    let root = index;
+    while (parent[root] !== root) root = parent[root];
+    while (parent[index] !== root) {
+      const next = parent[index];
+      parent[index] = root;
+      index = next;
     }
     return root;
   };
@@ -125,16 +150,18 @@ function smoothCornerNormals(
     if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] <= 0) continue;
     for (const vId of ends) {
       if (vId === null) continue;
-      const left = find(touch(`${vId}:${faces[0]}`));
-      const right = find(touch(`${vId}:${faces[1]}`));
-      if (left !== right) parent.set(left, right);
+      const left = find(touch(vId, faces[0]));
+      const right = find(touch(vId, faces[1]));
+      if (left !== right) parent[left] = right;
     }
   }
 
-  const sums = new Map<string, [number, number, number]>();
-  for (const key of parent.keys()) {
-    const normal = builder.faces.get(Number(key.slice(key.indexOf(':') + 1)))!.normal;
-    const root = find(key);
+  // Summed in the order the corners were first seen, as before, so the
+  // floating-point result is bit-for-bit what it was.
+  const sums = new Map<number, [number, number, number]>();
+  for (let index = 0; index < parent.length; index++) {
+    const normal = builder.faces.get(cornerFace[index])!.normal;
+    const root = find(index);
     const sum = sums.get(root);
     if (sum) {
       sum[0] += normal[0];
@@ -144,13 +171,20 @@ function smoothCornerNormals(
       sums.set(root, [normal[0], normal[1], normal[2]]);
     }
   }
+  // One result per surface, shared by all its corners: callers only read it.
+  const corners = new Map<number, SmoothCorner>();
   return (vId, fId) => {
-    const key = `${vId}:${fId}`;
-    if (!parent.has(key)) return null;
-    const root = find(key);
-    const sum = sums.get(root)!;
-    const length = Math.hypot(sum[0], sum[1], sum[2]) || 1;
-    return { root, n: [sum[0] / length, sum[1] / length, sum[2] / length] };
+    const index = cornerIndex.get(vId)?.get(fId);
+    if (index === undefined) return null;
+    const root = find(index);
+    let corner = corners.get(root);
+    if (!corner) {
+      const sum = sums.get(root)!;
+      const length = Math.hypot(sum[0], sum[1], sum[2]) || 1;
+      corner = { root, n: [sum[0] / length, sum[1] / length, sum[2] / length] };
+      corners.set(root, corner);
+    }
+    return corner;
   };
 }
 
@@ -212,7 +246,8 @@ export function buildLocalFaceGroups(
         localUvs: [],
         normalsAccum: [],
         localFaces: [],
-        localVMap: new Map<string, number>(),
+        vertexIndex: new Map<number, number[]>(),
+        smoothRoots: [],
       };
       faceGroups.set(colorKey, group);
     }
@@ -248,14 +283,29 @@ export function buildLocalFaceGroups(
               ? [-smooth.n[0], -smooth.n[1], -smooth.n[2]]
               : smooth.n
             : sideNormal;
-          const key = smooth ? `${vId},${u},${v},${smooth.root}` : `${vId},${u},${v}`;
-          idx = group.localVMap.get(key);
+          // An output vertex is reused only by a corner with the same
+          // source vertex, the same UV and the same smoothed surface.
+          // Compared as numbers: this used to format all of them into a
+          // string key for every corner of every triangle.
+          const root = smooth ? smooth.root : -1;
+          let candidates = group.vertexIndex.get(vId);
+          if (!candidates) group.vertexIndex.set(vId, (candidates = []));
+          idx = undefined;
+          for (let c = 0; c < candidates.length; c++) {
+            const candidate = candidates[c];
+            const uv = group.localUvs[candidate];
+            if (group.smoothRoots[candidate] === root && sameNumber(uv[0], u) && sameNumber(uv[1], v)) {
+              idx = candidate;
+              break;
+            }
+          }
           if (idx === undefined) {
             group.localVerts.push(p);
             group.localUvs.push([u, v]);
             group.normalsAccum.push([normal[0], normal[1], normal[2]]);
+            group.smoothRoots.push(root);
             idx = group.localVerts.length - 1;
-            group.localVMap.set(key, idx);
+            candidates.push(idx);
           } else {
             const accum = group.normalsAccum[idx];
             accum[0] += normal[0];

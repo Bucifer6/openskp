@@ -443,21 +443,78 @@ error preserved as `.cause`. See
 [docs/OBSERVABILITY.md](../../docs/OBSERVABILITY.md) for the full
 cross-language reference.
 
-## Known limitation: large files
+## Large files
 
-Memory use scales worse than the other four ports on very large files —
-a 113 MB file needs 8–16 GB of Node heap, and files beyond ~150-200 MB
-may not parse in a browser tab at all (a typical tab's heap ceiling is
-~4 GB). Root cause: V8's per-object overhead on millions of small
-geometry objects. See
-[docs/DEVELOPER_GUIDE.md](../../docs/DEVELOPER_GUIDE.md#performance) for
-verified numbers before parsing very large files in this package.
+Reading is CPU-bound and synchronous. A real 120 MB SketchUp 2022 model
+(1,398 definitions, 2.3 million triangles placed) reads in about 9 s with
+`parseSkp` and 11 s with `buildInstancedScene` or `loadSkp` on a current
+desktop, using roughly 2 GB of memory at peak. Memory grows with the
+model's geometry rather than its file size; give Node more heap for the
+largest files (`node --max-old-space-size=8192`).
+
+In a browser, read in a Web Worker so the page stays responsive, and load
+the self-contained build there (an import map does not apply inside a
+worker):
+
+```javascript
+// worker.js
+import { loadSkp, simplifyInstancedScene } from 'openskp/browser';
+```
+
+`examples/web-viewer/skp-worker.js` is a complete example. A browser gives
+a page a few GB at most, so a model that needs more still fails there -
+convert it on the command line instead.
+
+## Making a model lighter
+
+For viewing a heavy model - in a browser, on a phone - reduce it first:
+
+```typescript
+import { SkpFile, simplifyInstancedScene, toInstancedGLB } from 'openskp';
+
+const scene = SkpFile.open('building.skp').buildInstancedScene();
+const { scene: light, stats } = simplifyInstancedScene(scene, { detail: 'medium' });
+console.log(`${stats.trianglesBefore} -> ${stats.trianglesAfter} triangles`);
+const glb = toInstancedGLB(light, { textures: true });
+
+// or in one step
+SkpFile.open('building.skp').exportGLB('building.glb', { detail: 'medium', textures: true });
+```
+
+| `detail` | Tolerance | Objects left out | Use |
+|:---|:---|:---|:---|
+| `'high'` | 2 mm | none | Close to indistinguishable |
+| `'medium'` | 6 mm | under 1 cm | General viewing |
+| `'low'` | 2 cm | under 3 cm | Overviews, weak devices |
+
+A model's weight is usually in a few detailed components placed many times
+(furniture, fittings, mesh panels). Those are reduced, once for all their
+placements; walls, slabs and other plain geometry are left exactly as
+modelled. Pass `tolerance` and `minObjectSize` (metres) instead of a preset
+for your own trade-off.
+
+This is vertex clustering, not a quality-preserving decimator: at a loose
+tolerance curved surfaces show facets, small parts turn blocky, and texture
+mapping on reduced components is approximate. It is meant for looking at a
+model, not for measuring or editing it.
+
+## Command line
+
+```bash
+npx openskp info model.skp                 # version, units, layers, counts
+npx openskp convert model.skp model.glb    # also .obj .stl .ply .dxf .ifc .json .frag
+npx openskp convert model.skp light.glb --detail low --textures
+npx openskp thumbnail model.skp preview.png
+```
 
 ## Package Structure
 
 | Module | Purpose |
 |---|---|
 | `parser.ts` | TLV binary parser for SketchUp's internal format |
+| `simplify.ts` | Lighter copies of an instanced scene for viewing |
+| `image-convert.ts` | TIFF textures decoded and re-encoded as PNG |
+| `node-io.ts` | File access that works from both `import` and `require` |
 | `model.ts` | Interfaces for geometry, layers, materials, scenes |
 | `legacy.ts` | Legacy MFC container support (SketchUp 2013–2020) |
 | `vff.ts` | VFF/ZIP container handling (`fflate`-based) |

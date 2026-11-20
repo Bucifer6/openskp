@@ -343,7 +343,16 @@ impl GltfBuilder {
         let view = self.add_view(off, normals.len() * 4, Some(TARGET_ARRAY_BUFFER));
         let normal_acc = self.add_accessor(view, normals.len() / 3, COMPONENT_FLOAT, "VEC3", None);
 
-        let off = self.append_f32s(uvs)?;
+        // The scene's V runs up the image (SketchUp's convention, origin
+        // bottom-left); glTF's runs down from the top-left, so V is written
+        // as 1 - V. Written unchanged, as it used to be, every textured face
+        // was upside down in a reader that follows the specification.
+        let gltf_uvs: Vec<f32> = uvs
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| if i % 2 == 1 { 1.0 - v } else { v })
+            .collect();
+        let off = self.append_f32s(&gltf_uvs)?;
         let view = self.add_view(off, uvs.len() * 4, Some(TARGET_ARRAY_BUFFER));
         let uv_acc = self.add_accessor(view, uvs.len() / 2, COMPONENT_FLOAT, "VEC2", None);
 
