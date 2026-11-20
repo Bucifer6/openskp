@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed — TypeScript, .NET, Dart, C++, Rust: textures in exported GLB files were upside down
+### Added — TypeScript: `defaultFaceColor` scene option
+
+- A face with no material of its own (and none inherited from a painted group or component) took
+  its layer's colour in `buildScene`/`buildInstancedScene`. SketchUp only draws it that way with
+  "Color by tag" on; normally it is the default white, so unpainted models (often a car or a
+  person from the 3D Warehouse) came out in the tag's colour, frequently a saturated red or pink
+  for Layer0. `{ defaultFaceColor: { r: 255, g: 255, b: 255 } }` draws them as SketchUp does.
+  Unset, nothing changes. The instanced scene keys its mesh resources on the same colour, so
+  placements on differently coloured layers share one resource again when it is set.
+
+### Fixed — TypeScript: textures in exported GLB files were upside down
 
 - The GLB writers in these five ports wrote texture coordinates as the scene holds them, in
   SketchUp's convention (V runs up the image, origin bottom-left). glTF's V runs down from the
