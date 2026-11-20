@@ -81,6 +81,7 @@ import { isLegacy } from './legacy';
 import { reconstructLoopVertices } from './geometry';
 import { faceUvBasis, computeFaceUv, SkpModel, Definition, Face, Instance } from './model';
 import { parseSkp } from './index';
+import { isNode, readFileBytes, toBytes, BinaryInput } from './node-io';
 import {
   create,
   SkpBuilder,
@@ -96,8 +97,6 @@ import {
 // This package has no hard dependency on @types/node (it targets the
 // browser too), so - like index.ts's own SkpFile.open - Node-only globals
 // are declared `any` here rather than pulled in via @types/node.
-declare const process: any;
-declare const require: any;
 
 /** The shared addFace/addInstance surface `SkpBuilder` and
  * `ComponentDefinitionBuilder` both expose - replay works generically
@@ -109,15 +108,13 @@ interface ReplayTarget {
   addInstance(definition: ComponentDefinitionBuilder, options?: AddInstanceOptions): void;
 }
 
-function readFileToArrayBuffer(path: string): ArrayBuffer {
-  if (typeof process === 'undefined' || !process.versions || !process.versions.node) {
+function readFileForEdit(path: string): Uint8Array {
+  if (!isNode()) {
     throw new SkpWriteError(
       'a file-path source for openExisting is only supported in Node.js environments - pass an ArrayBuffer instead'
     );
   }
-  const fs = require('fs');
-  const buffer = fs.readFileSync(path);
-  return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  return readFileBytes(path, 'openExisting');
 }
 
 /**
@@ -155,10 +152,10 @@ function readFileToArrayBuffer(path: string): ArrayBuffer {
  * @throws SkpWriteError if `source` isn't a legacy-format file.
  */
 export function openExisting(
-  source: string | ArrayBuffer
+  source: string | BinaryInput
 ): { builder: SkpBuilder; warnings: string[]; definitions: Map<string, ComponentDefinitionBuilder> } {
-  const buffer = typeof source === 'string' ? readFileToArrayBuffer(source) : source;
-  const head = new Uint8Array(buffer, 0, Math.min(0x200, buffer.byteLength));
+  const buffer = typeof source === 'string' ? readFileForEdit(source) : toBytes(source);
+  const head = buffer.subarray(0, Math.min(0x200, buffer.byteLength));
   if (!isLegacy(head)) {
     throw new SkpWriteError(
       `${typeof source === 'string' ? JSON.stringify(source) : 'the given buffer'} is not a legacy-format ` +

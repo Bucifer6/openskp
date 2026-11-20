@@ -1,4 +1,5 @@
 import { foldScale, multiplyMatrices } from './transforms';
+import { convertTextureToPng } from './image-convert';
 import { extractDynamicProperties, extractAttributeDictionaries, isGenericDefinitionName, findNameOverride, stringifyVffAttrValue, VffAttrValue } from './geometry';
 import { ParseOptions, PROGRESS_INTERVAL, emitLog, emitProgress } from './observability';
 import { SkpParseError } from './errors';
@@ -222,16 +223,40 @@ export function buildInstancedSceneFromParsed(
   const textures: SceneTexture[] = [];
   const textureIndexByKey = new Map<string, number>();
 
+  const textureIndexByObject = new Map<Texture, number | null>();
+
   function textureIndexFor(tex: Texture | null | undefined): number | null {
     if (!tex || !tex.data || tex.data.length === 0) return null;
-    const mimeType = sniffImageMime(tex.data);
-    if (mimeType === null) return null; // a format glTF cannot carry
-    const head = Array.from(tex.data.subarray(0, 16)).join(',');
-    const key = `${tex.data.length}:${head}`;
+    // Asked once per face side; the answer for a given texture never
+    // changes, and working it out builds a string from the image bytes.
+    const known = textureIndexByObject.get(tex);
+    if (known !== undefined) return known;
+    const index = textureIndexUncached(tex, tex.data);
+    textureIndexByObject.set(tex, index);
+    return index;
+  }
+
+  function textureIndexUncached(tex: Texture, data: Uint8Array): number | null {
+    // length plus a short byte prefix is enough to tell real images apart
+    // without hashing megabytes on every face
+    const head = Array.from(data.subarray(0, 16)).join(',');
+    const key = `${data.length}:${head}`;
     const hit = textureIndexByKey.get(key);
     if (hit !== undefined) return hit;
+
+    let image = data;
+    let mimeType = sniffImageMime(data);
+    if (mimeType === null) {
+      // Not PNG or JPEG, which is all glTF and browsers carry. A TIFF is
+      // re-encoded as PNG so the material keeps its image; anything else
+      // keeps its flat colour.
+      const converted = convertTextureToPng(data);
+      if (converted === null) return null;
+      image = converted;
+      mimeType = 'image/png';
+    }
     const idx = textures.length;
-    textures.push({ data: tex.data, mimeType, filename: tex.filename });
+    textures.push({ data: image, mimeType, filename: tex.filename });
     textureIndexByKey.set(key, idx);
     return idx;
   }

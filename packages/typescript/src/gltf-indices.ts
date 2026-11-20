@@ -62,3 +62,25 @@ export function encodeIndices(indices: Uint32Array): {
     bytesPerIndex: 4,
   };
 }
+
+/**
+ * Copy a primitive's texture coordinates into a GLB buffer in glTF's
+ * convention.
+ *
+ * The scene's UVs are SketchUp's: V runs UP the image, (0, 0) at its
+ * bottom-left corner. glTF's V runs DOWN, (0, 0) at the top-left. Written
+ * unchanged - as they were until this was added - every textured face in
+ * an exported GLB showed its image upside down in any reader that follows
+ * the specification. A tiling wood or brick hides that; a label, a poster
+ * or a sign does not.
+ *
+ * @param target - The GLB's binary buffer
+ * @param byteOffset - Where the UVs go; a multiple of 4
+ */
+export function writeGltfUvs(target: Uint8Array, byteOffset: number, uvs: Float32Array): void {
+  const view = new DataView(target.buffer, target.byteOffset + byteOffset, uvs.byteLength);
+  for (let i = 0; i < uvs.length; i += 2) {
+    view.setFloat32(i * 4, uvs[i], true);
+    view.setFloat32(i * 4 + 4, 1 - uvs[i + 1], true);
+  }
+}

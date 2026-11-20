@@ -1,5 +1,5 @@
 import type { InstancedScene, InstancedNode } from './instanced';
-import { encodeIndices } from './gltf-indices';
+import { encodeIndices, writeGltfUvs } from './gltf-indices';
 
 /** Options for {@link toInstancedGLB}. */
 export interface InstancedGlbOptions {
@@ -158,10 +158,7 @@ export function toInstancedGLB(
       byteOffset += prim.normals.byteLength;
 
       const uvByteOffset = byteOffset;
-      binaryBuffer.set(
-        new Uint8Array(prim.uvs.buffer, prim.uvs.byteOffset, prim.uvs.byteLength),
-        uvByteOffset
-      );
+      writeGltfUvs(binaryBuffer, uvByteOffset, prim.uvs);
       byteOffset += prim.uvs.byteLength;
 
       const indByteOffset = byteOffset;

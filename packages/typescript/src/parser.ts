@@ -29,34 +29,60 @@ export const CONTAINER_TAGS = new Set<string>([
   '9113', '9213', '6942', '6C42', '6842',
 ]);
 
+// Plain byte arithmetic rather than a DataView per call: these two are the
+// hottest functions of a VFF parse (one call per TLV record), and the
+// throwaway DataView was a measurable share of both the time and the
+// garbage on a real 126 MB model.
 export function readU32(data: Uint8Array, offset: number): number {
-  if (offset + 4 > data.length) {
+  if (offset < 0 || offset + 4 > data.length) {
     throw new Error('Out of bounds readU32');
   }
-  const view = new DataView(data.buffer, data.byteOffset + offset, 4);
-  return view.getUint32(0, true);
+  return (
+    (data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16) | (data[offset + 3] << 24)) >>> 0
+  );
 }
 
+const F64_SCRATCH = new Float64Array(1);
+const F64_SCRATCH_BYTES = new Uint8Array(F64_SCRATCH.buffer);
+// Whether this machine stores numbers little-endian, as the file does.
+// Every platform JavaScript realistically runs on does; the DataView
+// fallback below keeps the result right on one that does not.
+const HOST_IS_LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
+
 export function readF64(data: Uint8Array, offset: number): number {
-  if (offset + 8 > data.length) {
+  if (offset < 0 || offset + 8 > data.length) {
     throw new Error('Out of bounds readF64');
   }
-  const view = new DataView(data.buffer, data.byteOffset + offset, 8);
-  return view.getFloat64(0, true);
+  if (!HOST_IS_LITTLE_ENDIAN) {
+    return new DataView(data.buffer, data.byteOffset + offset, 8).getFloat64(0, true);
+  }
+  // Eight byte copies into a reused buffer: a model has one of these per
+  // vertex coordinate, and a DataView allocated for each was measurable.
+  const b = F64_SCRATCH_BYTES;
+  b[0] = data[offset];
+  b[1] = data[offset + 1];
+  b[2] = data[offset + 2];
+  b[3] = data[offset + 3];
+  b[4] = data[offset + 4];
+  b[5] = data[offset + 5];
+  b[6] = data[offset + 6];
+  b[7] = data[offset + 7];
+  return F64_SCRATCH[0];
 }
 
 export function readI32(data: Uint8Array, offset: number): number {
-  if (offset + 4 > data.length) {
+  if (offset < 0 || offset + 4 > data.length) {
     throw new Error('Out of bounds readI32');
   }
-  const view = new DataView(data.buffer, data.byteOffset + offset, 4);
-  return view.getInt32(0, true);
+  return data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16) | (data[offset + 3] << 24);
 }
 
 export function parseVarInt(data: Uint8Array, offset: number, length: number): number {
   let val = 0;
+  let scale = 1;
   for (let i = 0; i < length; i++) {
-    val += data[offset + i] * Math.pow(256, i);
+    val += data[offset + i] * scale;
+    scale *= 256;
   }
   return val;
 }
@@ -77,6 +103,58 @@ function nestingError(tag: string, offset: number): SkpParseError {
   });
 }
 
+const HEX_BYTE: string[] = [];
+for (let i = 0; i < 256; i++) HEX_BYTE.push((i < 16 ? '0' : '') + i.toString(16).toUpperCase());
+const TAG_NAMES: (string | undefined)[] = new Array(65536);
+
+/** The record tag at `pos` as its 4-character uppercase hex name. Names
+ * are interned per tag value, so a file with millions of records builds a
+ * few hundred strings instead of one per record. */
+export function tagAt(data: Uint8Array, pos: number): string {
+  const key = (data[pos] << 8) | data[pos + 1];
+  let name = TAG_NAMES[key];
+  if (name === undefined) {
+    name = HEX_BYTE[data[pos]] + HEX_BYTE[data[pos + 1]];
+    TAG_NAMES[key] = name;
+  }
+  return name;
+}
+
+const EMPTY_PAYLOAD = new Uint8Array(0);
+/** Shared by every leaf record. Frozen so that an accidental push fails
+ * loudly instead of quietly adding a child to every leaf in the file. */
+const NO_CHILDREN = Object.freeze([]) as unknown as TlvNode[];
+
+/** A leaf record whose `payload` view is only created when first read.
+ *
+ * Most walkers match records by tag and never look at the bytes of the
+ * records they skip, so creating one `Uint8Array` view per record up front
+ * was pure allocation: on a real 126 MB model it was millions of views,
+ * nearly all of them thrown away unread. */
+class LeafNode implements TlvNode {
+  readonly children: TlvNode[] = NO_CHILDREN;
+  private view: Uint8Array | undefined = undefined;
+
+  constructor(
+    private readonly data: Uint8Array,
+    readonly offset: number,
+    readonly tag: string,
+    readonly size: number
+  ) {}
+
+  get payload(): Uint8Array {
+    let view = this.view;
+    if (view === undefined) {
+      view =
+        this.size === 0
+          ? EMPTY_PAYLOAD
+          : this.data.subarray(this.offset + 6, this.offset + 6 + this.size);
+      this.view = view;
+    }
+    return view;
+  }
+}
+
 export function parseTlvRecursive(
   data: Uint8Array,
   start: number,
@@ -88,43 +166,27 @@ export function parseTlvRecursive(
   const elements: TlvNode[] = [];
 
   while (pos <= end - 6) {
-    const tagBytes = data.subarray(pos, pos + 2);
     const size = readU32(data, pos + 2);
 
     if (pos + 6 + size > end) {
       break;
     }
 
-    // Convert tagBytes to uppercase hex string
-    let tagHex = '';
-    for (let i = 0; i < 2; i++) {
-      const hex = tagBytes[i].toString(16).toUpperCase();
-      tagHex += hex.length === 1 ? '0' + hex : hex;
-    }
+    const tagHex = tagAt(data, pos);
 
-    let children: TlvNode[] = [];
-    const isContainer = containerTags.has(tagHex);
-
-    if (isContainer && size > 0) {
+    if (size > 0 && containerTags.has(tagHex)) {
       if (depth >= MAX_TLV_DEPTH) throw nestingError(tagHex, pos);
-      children = parseTlvRecursive(
-        data,
-        pos + 6,
-        pos + 6 + size,
-        containerTags,
-        depth + 1
-      );
+      const children = parseTlvRecursive(data, pos + 6, pos + 6 + size, containerTags, depth + 1);
+      if (children.length > 0) {
+        elements.push({ offset: pos, tag: tagHex, size, children, payload: EMPTY_PAYLOAD });
+      } else {
+        // A container whose bytes hold no complete record keeps them as a
+        // payload, exactly as a leaf does.
+        elements.push(new LeafNode(data, pos, tagHex, size));
+      }
+    } else {
+      elements.push(new LeafNode(data, pos, tagHex, size));
     }
-
-    const payload = children.length > 0 ? new Uint8Array(0) : data.subarray(pos + 6, pos + 6 + size);
-
-    elements.push({
-      offset: pos,
-      tag: tagHex,
-      size,
-      children,
-      payload,
-    });
 
     pos += 6 + size;
   }
@@ -140,15 +202,9 @@ function flatHeaders(data: Uint8Array, start: number, end: number): [string, num
   const headers: [string, number, number][] = [];
   let pos = start;
   while (pos <= end - 6) {
-    const tagBytes = data.subarray(pos, pos + 2);
     const size = readU32(data, pos + 2);
     if (pos + 6 + size > end) break;
-    let tagHex = '';
-    for (let i = 0; i < 2; i++) {
-      const hex = tagBytes[i].toString(16).toUpperCase();
-      tagHex += hex.length === 1 ? '0' + hex : hex;
-    }
-    headers.push([tagHex, pos, size]);
+    headers.push([tagAt(data, pos), pos, size]);
     pos += 6 + size;
   }
   return headers;

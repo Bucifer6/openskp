@@ -183,7 +183,34 @@ input:checked + .slider:before{transform:translateX(13px)}
 .spinner{width:40px;height:40px;border:3px solid var(--bg-4);border-radius:50%;
   border-top-color:var(--accent);animation:spin 0.9s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-#loading-text{font-size:0.86rem;font-weight:500;color:var(--text-1)}
+#loading-text{font-size:0.86rem;font-weight:500;color:var(--text-1);font-variant-numeric:tabular-nums}
+.progress-track{width:min(280px,70vw);height:4px;border-radius:2px;background:var(--bg-4);overflow:hidden}
+.progress-track[hidden],#btn-loading-cancel[hidden]{display:none}
+.progress-fill{height:100%;width:0;background:var(--accent);border-radius:2px;transition:width .12s linear}
+#btn-loading-cancel{margin-top:6px}
+
+.detail-control{display:flex;align-items:center;gap:8px;font-size:0.8rem;color:var(--text-1)}
+.detail-select{appearance:none;-webkit-appearance:none;background:var(--bg-3);color:var(--text-0);
+  border:1px solid var(--border);border-radius:var(--r-sm);padding:7px 28px 7px 10px;font-size:0.82rem;
+  font-weight:500;cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a3a3ab' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center}
+.detail-select:hover{border-color:var(--border-h)}
+.detail-select:focus-visible{outline:2px solid var(--accent-line);outline-offset:1px}
+.detail-select:disabled{opacity:.5;cursor:not-allowed}
+@media (max-width:768px){.detail-label{display:none}}
+
+/* ── Error toast ───────────────────────────────────────────────────── */
+#toast{position:absolute;left:50%;bottom:64px;transform:translate(-50%,12px);z-index:400;
+  max-width:min(560px,calc(100vw - 32px));padding:12px 16px;border-radius:var(--r-md);
+  background:var(--bg-2);border:1px solid rgba(229,72,77,0.45);color:var(--text-0);
+  font-size:0.86rem;line-height:1.45;box-shadow:0 12px 32px -8px rgba(0,0,0,0.6);
+  opacity:0;pointer-events:none;cursor:pointer;transition:opacity .18s ease,transform .18s ease}
+#toast.visible{opacity:1;pointer-events:auto;transform:translate(-50%,0)}
+@media (prefers-reduced-motion:reduce){
+  #toast,.progress-fill{transition:none}
+  .spinner{animation-duration:2.4s}
+}
 
 .size-warning-content{border:1px solid rgba(229,72,77,0.3);background:var(--bg-1);border-radius:var(--r-lg);
   padding:40px 36px;display:flex;flex-direction:column;align-items:center;gap:11px;

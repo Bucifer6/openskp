@@ -89,6 +89,8 @@ audit_report.md
 
 # C# / .NET
 [Bb]in/
+# ...except the TypeScript package's command line entry point
+!packages/typescript/bin/
 [Oo]bj/
 nupkg/
 *.suo

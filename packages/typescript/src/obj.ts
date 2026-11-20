@@ -1,7 +1,6 @@
+import { nodeBuiltin, writeFileEnsuringDir } from './node-io';
 import { SkpScene } from './model';
 
-declare const process: any;
-declare const require: any;
 
 function sanitizeMaterialName(name: string): string {
   const clean = name.trim().replace(/[^\w.-]/g, '_');
@@ -190,25 +189,11 @@ export function toOBJ(scene: SkpScene, mtlFilename?: string): string {
  * @param exportMtl Whether to export companion .mtl file alongside .obj
  */
 export function exportOBJ(scene: SkpScene, outputPath: string, exportMtl: boolean = true): void {
-  if (typeof process !== 'undefined' && process.versions && process.versions.node) {
-    const fs = require('fs');
-    const path = require('path');
-
-    const mtlName = exportMtl ? `${path.basename(outputPath, path.extname(outputPath))}.mtl` : undefined;
-    const text = toOBJ(scene, mtlName);
-    const dir = path.dirname(outputPath);
-
-    if (dir && !fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    fs.writeFileSync(outputPath, text, 'utf-8');
-
-    if (exportMtl && mtlName) {
-      const mtlPath = path.join(dir, mtlName);
-      fs.writeFileSync(mtlPath, toMTL(scene), 'utf-8');
-    }
-  } else {
-    throw new Error('exportOBJ file writing is only supported in Node.js environment');
+  const feature = 'exportOBJ file writing';
+  const path = nodeBuiltin('path', feature);
+  const mtlName = exportMtl ? `${path.basename(outputPath, path.extname(outputPath))}.mtl` : undefined;
+  writeFileEnsuringDir(outputPath, toOBJ(scene, mtlName), feature);
+  if (exportMtl && mtlName) {
+    writeFileEnsuringDir(path.join(path.dirname(outputPath), mtlName), toMTL(scene), feature);
   }
 }
