@@ -58,16 +58,15 @@ for the full, current matrix):
   fixes — Python only.
 - Legacy (pre-2021) pages/scenes reading — Python and C++; TypeScript/
   .NET/Dart only read pages/scenes from VFF (2021+) files.
-- Per-edge/per-face layer, `Edge#curve` pointers, classic `CArcCurve`
-  frames — Python only.
+- Per-edge layer — Python only. Per-face layer (`Face.layer`) is in Python
+  and TypeScript; .NET, Dart and C++ still need it.
+- A tag's line style in SketchUp 2019/2020 files (`CCustomLineStyle`) —
+  Python and TypeScript; .NET, Dart, C++ and Rust have no reader for it in
+  their sources and were not run against these files.
 - Attribute dictionaries: full 9-value-type support for VFF (2021+) format
   — Python (7/9) only; not independently re-checked this round for the
   other 4 languages, so treat as needing a fresh look rather than a
   confirmed gap.
-
-**Good first contribution?** Most of these have a real, SDK-verified Python
-implementation to port from — the hard research is already done. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for the workflow.
 
 **Good first contribution?** Most of these have a real, SDK-verified Python
 implementation to port from — the hard research is already done. See
@@ -85,9 +84,8 @@ SketchUp versions 3 through 2025, 15 usable files) found 11 of 15 files
 parse and convert cleanly; the rest each hit their own distinct error
 signature (V3, V4/V5, V6, 2019). Those signatures are fixed in the Python
 reader, and V3, V4, V5, V6 and 2019 on SketchUp-written synthetic files in
-all five; but that sweep was run with Python, and the other four readers fail
-every legacy version of the real project (a `CText` variant they do not
-read, tracked in [#442](https://github.com/iamahsanmehmood/openskp/issues/442)), and the real V3 project fails in all five
+all five; the other four readers read the real project's saves with the same
+totals since [#442](https://github.com/iamahsanmehmood/openskp/issues/442), and the real V3 project fails in all five
 — see
 [docs/LANGUAGE_PARITY.md § 4](docs/LANGUAGE_PARITY.md#4-real-sketchup-file-version-support)
 for the full table. The three files that used to share one root cause (V7,

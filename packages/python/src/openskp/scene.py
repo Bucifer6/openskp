@@ -652,6 +652,23 @@ def build_scene(
             attribute_dicts: Dict[str, Dict[str, str]] = {}
             name_override: Optional[str] = None
 
+            # Legacy (pre-2021 MFC) instances have no TLV children: the walker
+            # puts the instance's own layer and paint straight on the dict. A
+            # VFF instance carries the same two ids in its D007 record, read
+            # just below, so this applies only when there is none.
+            if not inst["children"]:
+                legacy_layer_id = inst.get("layer_id")
+                if legacy_layer_id:
+                    l_name = layer_id_to_name.get(legacy_layer_id, parent_layer)
+                legacy_mat_id = inst.get("material_id")
+                if legacy_mat_id:
+                    mat_name = material_id_to_name.get(legacy_mat_id)
+                    mat = materials.get(mat_name) or materials_by_folder.get(mat_name)
+                    if mat:
+                        c = mat["color"]
+                        inst_color = (c["r"], c["g"], c["b"])
+                        inst_material = mat
+
             d007 = next((c for c in inst["children"] if c["tag"] == "D007"), None)
             if d007:
                 d207 = next((c for c in d007["children"] if c["tag"] == "D207"), None)

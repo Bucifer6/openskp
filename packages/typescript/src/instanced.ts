@@ -1,6 +1,6 @@
 import { foldScale, multiplyMatrices } from './transforms';
 import { convertTextureToPng } from './image-convert';
-import { extractDynamicProperties, extractAttributeDictionaries, isGenericDefinitionName, findNameOverride, stringifyVffAttrValue, VffAttrValue } from './geometry';
+import { dominantFaceLayerName, extractDynamicProperties, extractAttributeDictionaries, isGenericDefinitionName, findNameOverride, stringifyVffAttrValue, VffAttrValue } from './geometry';
 import { ParseOptions, PROGRESS_INTERVAL, emitLog, emitProgress } from './observability';
 import { SkpParseError } from './errors';
 import { buildLocalFaceGroups } from './face-groups';
@@ -142,6 +142,12 @@ export interface InstancedNode {
   /** The mesh resource this node renders, or undefined for a node that
    * only groups children. */
   meshResourceId?: string;
+  /** The layer this node's own faces are drawn on, present only when it
+   * differs from {@link layer}: geometry keeps the tag it was drawn on even
+   * inside an instance carrying another (or none). A consumer toggling
+   * layer visibility should hide the node's mesh by this when present, and
+   * its children by {@link layer} as usual. */
+  meshLayer?: string;
   children: InstancedNode[];
 }
 
@@ -343,16 +349,26 @@ export function buildInstancedSceneFromParsed(
     return `${String(defId)}|${matKey}|${lc.r},${lc.g},${lc.b}`;
   }
 
+  /** The layer a definition's own faces render on when placed on
+   * `placementLayer`: their own dominant layer when they carry one, the
+   * placement's otherwise. Same rule as the baked path. */
+  function meshLayerFor(defId: number | string, placementLayer: string): string {
+    const d = defsDict.get(defId);
+    if (!d || d.builder.faces.size === 0) return placementLayer;
+    return dominantFaceLayerName(d.builder.faces, layerIdToName) ?? placementLayer;
+  }
+
   /** Build (or reuse) the local-space mesh resource for a definition
    * rendered in the given context. Returns undefined when the definition
    * has no face geometry of its own. */
   function meshResourceFor(
     defId: number | string,
     inheritedMaterial: Material | undefined,
-    layer: string
+    placementLayer: string
   ): string | undefined {
     const d = defsDict.get(defId);
     if (!d || d.builder.faces.size === 0) return undefined;
+    const layer = meshLayerFor(defId, placementLayer);
 
     const key = resourceVariantKey(defId, inheritedMaterial, layer);
     const hit = resourceIdByKey.get(key);
@@ -605,6 +621,7 @@ export function buildInstancedSceneFromParsed(
         guid: inst.refGuid || '',
         hidden: inst.hidden ?? false,
         meshResourceId: meshResourceFor(refIdx, instMaterial, lName),
+        ...(meshLayerFor(refIdx, lName) !== lName ? { meshLayer: meshLayerFor(refIdx, lName) } : {}),
         children,
       });
     }
@@ -632,6 +649,7 @@ export function buildInstancedSceneFromParsed(
     guid: '',
     hidden: false,
     meshResourceId: rootMeshResourceId,
+    ...(meshLayerFor('ROOT', 'Layer0') !== 'Layer0' ? { meshLayer: meshLayerFor('ROOT', 'Layer0') } : {}),
     children: rootChildren,
   };
 

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — TypeScript: three classic-file reading gaps found by comparing against Python
+
+Found by running every sample `.skp` in the repository through both readers and comparing the
+baked scenes. Before: 4 files failed in TypeScript and 16 more came out differently; now the two
+agree on 93 of 95 (the other two differ only in how the same surfaces are split into triangles).
+
+- **A SketchUp 2019/2020 model whose tags have line styles opens.** A tag with a "Dash" or "Dot"
+  line style points at an inline `CCustomLineStyle` object; the reader had none and failed with
+  `no reader for class CCustomLineStyle`. Port of the Python fix (#515), same three fixtures.
+- **A guide line that is the last entity of a component definition no longer breaks the file.**
+  The trailer-length calibration preferred a 7-byte guess on SketchUp 2017 files when only a null
+  tag followed, swallowed three bytes of the definition and failed with `expected a string
+  record`. The null-anchored pass now prefers the 4-byte trailer, as Python does.
+- **A face keeps the tag it was drawn on.** `Face.layer` (new) reports it, for classic and 2021+
+  files. `buildScene` labels and colours a definition's meshes by the tag most of its faces are
+  drawn on instead of the placement's, and `buildInstancedScene` reports it as the new optional
+  `InstancedNode.meshLayer`. Geometry drawn on "Table" inside an untagged component used to
+  report "Layer0", so a viewer could not hide it with its tag and its unpainted sides took
+  Layer0's colour (visible on the web viewer's own `chair_and_table.skp` sample).
+
+### Fixed — Python: a classic component's own tag and paint reach the scene
+
+- `build_scene` and `build_instanced_scene` only looked for an instance's layer and material in
+  the record a 2021+ instance carries. In a classic (pre-2021) file a painted component kept its
+  unpainted faces in the default colour, and every placement reported "Layer0" whatever tag it was
+  on. Both builders now use the ids the classic walker already reads. TypeScript already did.
 ### Added — TypeScript: placement ids in the baked scene
 
 - `MeshMetadata.placementIds` lists the placements a baked mesh sits in, outermost first, and

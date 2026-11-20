@@ -1,6 +1,6 @@
 import { transformPoint, multiplyMatrices } from './transforms';
 import { convertTextureToPng } from './image-convert';
-import { extractDynamicProperties, extractAttributeDictionaries, isGenericDefinitionName, findNameOverride, stringifyVffAttrValue, ParsedDefinition, VffAttrValue } from './geometry';
+import { dominantFaceLayerName, extractDynamicProperties, extractAttributeDictionaries, isGenericDefinitionName, findNameOverride, stringifyVffAttrValue, ParsedDefinition, VffAttrValue } from './geometry';
 import { buildLocalFaceGroups } from './face-groups';
 import { SkpParseError } from './errors';
 import { ParseOptions, PROGRESS_INTERVAL, emitLog, emitProgress } from './observability';
@@ -240,6 +240,9 @@ export interface Face {
   /** Whether the face is hidden (SketchUp's "Hide" on this specific face,
    * not a layer/tag visibility toggle). */
   hidden: boolean;
+  /** Name of the layer (tag) the face itself is drawn on, `''` when it is
+   * on the default layer and so takes the layer of whatever places it. */
+  layer: string;
 }
 
 /**
@@ -713,6 +716,7 @@ function buildDefinition(id: number, d: ParsedDefinition, layerIdToName?: Map<nu
     uvProjected: fData.uvProjected ?? false,
     uvProjectedBack: fData.uvProjectedBack ?? false,
     hidden: fData.hidden ?? false,
+    layer: (fData.layerId ? layerIdToName?.get(fData.layerId) : undefined) ?? '',
   }));
   const instances: Instance[] = d.builder.instances.map((inst) => ({
     name: inst.name,
@@ -1003,6 +1007,10 @@ export function buildSceneFromParsed(
     const builder = d.builder;
 
     if (builder.faces.size > 0) {
+      // The definition's own faces can sit on a layer of their own, which
+      // then wins over the placement's for these meshes (not for nested
+      // instances, which keep inheriting the placement's layer).
+      const meshLayer = dominantFaceLayerName(builder.faces, layerIdToName) ?? parentLayer;
       // Group faces sharing a resolved (color, doubleSided) pair into one
       // mesh each - same grouping the C++ reference uses (the only port
       // that already had this before this port): a face whose front/back
@@ -1026,7 +1034,7 @@ export function buildSceneFromParsed(
           resolveMaterialFromMaps(matId, materialIdToName, materialsMap, materialsByFolder),
         textureIndexFor,
         inheritedMaterial,
-        fallbackLayerColor: options?.defaultFaceColor ?? getLayerColor(parentLayer),
+        fallbackLayerColor: options?.defaultFaceColor ?? getLayerColor(meshLayer),
         definitionId: defId,
         respectVisibility: options?.respectEdgeVisibility,
         frontSideOnly: options?.frontSideOnly,
@@ -1047,13 +1055,13 @@ export function buildSceneFromParsed(
           faceGroups.size > 1
             ? `_${group.color.r}_${group.color.g}_${group.color.b}_${group.doubleSided ? 'ds' : 'ss'}`
             : '';
-        const geomName = `mesh_${meshCounter.count}_${safePath}_${parentLayer}${colorSuffix}`;
+        const geomName = `mesh_${meshCounter.count}_${safePath}_${meshLayer}${colorSuffix}`;
         meshCounter.count++;
 
         meshIndex[geomName] = {
           name: isRoot ? 'ROOT' : pathName.split(' / ').pop() || '',
           definitionName: d.name || '',
-          layer: parentLayer,
+          layer: meshLayer,
           positionMm: [Math.round(tx * 100) / 100, Math.round(ty * 100) / 100, Math.round(tz * 100) / 100],
           properties: {},
           attributeDictionaries: {},
