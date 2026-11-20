@@ -214,7 +214,10 @@ export function buildInstancedSceneFromParsed(
   emitLog(options, 'info', `Building instanced scene: ${defsDict.size} definitions available`);
   const instanceCounter = { count: 0 };
 
+  // An unpainted face's colour: the default face colour when asked for one, else its layer's
+  // (both the resource key and the face groups use this, so they always agree)
   const getLayerColor = (name: string) => {
+    if (options?.defaultFaceColor) return options.defaultFaceColor;
     const c = layerColors.get(name) || [136, 136, 136];
     return { r: c[0], g: c[1], b: c[2] };
   };

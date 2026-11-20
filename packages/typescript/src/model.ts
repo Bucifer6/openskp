@@ -495,6 +495,19 @@ export interface SceneOptions {
    * Off by default: a viewer wants each side's own colour.
    */
   frontSideOnly?: boolean;
+  /**
+   * The colour of a face with no material of its own (and none inherited from
+   * a painted group or component), instead of its layer's (tag's) colour.
+   *
+   * SketchUp draws such faces in its default front colour (white) unless the
+   * style has "Color by tag" on, so a viewer that wants the model to look as
+   * it does in SketchUp passes `{ r: 255, g: 255, b: 255 }`. A model from the
+   * 3D Warehouse whose parts are unpainted otherwise comes out in the tag's
+   * colour (often a saturated red or pink for Layer0).
+   *
+   * Unset by default: every face then takes its layer's colour, as before.
+   */
+  defaultFaceColor?: { r: number; g: number; b: number };
 }
 
 /**
@@ -1001,7 +1014,7 @@ export function buildSceneFromParsed(
           resolveMaterialFromMaps(matId, materialIdToName, materialsMap, materialsByFolder),
         textureIndexFor,
         inheritedMaterial,
-        fallbackLayerColor: getLayerColor(parentLayer),
+        fallbackLayerColor: options?.defaultFaceColor ?? getLayerColor(parentLayer),
         definitionId: defId,
         respectVisibility: options?.respectEdgeVisibility,
         frontSideOnly: options?.frontSideOnly,
