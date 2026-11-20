@@ -86,9 +86,16 @@ function stripDe05(p: Uint8Array): Uint8Array {
 function findBytes(data: Uint8Array, needle: Uint8Array, start = 0): number {
   const nlen = needle.length;
   const limit = data.length - nlen;
-  outer: for (let i = start; i <= limit; i++) {
-    for (let j = 0; j < nlen; j++) {
-      if (data[i + j] !== needle[j]) continue outer;
+  const first = needle[0];
+  // indexOf scans for the first byte natively, far faster than a loop
+  // here over hundreds of megabytes of model data.
+  let i = data.indexOf(first, start);
+  outer: while (i >= 0 && i <= limit) {
+    for (let j = 1; j < nlen; j++) {
+      if (data[i + j] !== needle[j]) {
+        i = data.indexOf(first, i + 1);
+        continue outer;
+      }
     }
     return i;
   }
@@ -182,10 +189,27 @@ export function scanInstanceTransforms(top: TlvNode, world: Map<string, number[]
  * in WORLD space (inches). A connection point that cannot be resolved drops
  * the whole dimension (fail-safe).
  */
+/**
+ * Filled in by {@link parseDimensions} to say whether any dimension it met
+ * is attached to geometry, and so can only be placed with the vertex and
+ * instance tables from {@link scanVertexPositions} and
+ * {@link scanInstanceTransforms}.
+ *
+ * Those tables hold an entry for every vertex and every instance in the
+ * file. Most models carry no dimension at all, and built them - seconds of
+ * work and a large amount of memory on a big model - to look nothing up.
+ * A caller runs parseDimensions once with empty tables and a probe: if the
+ * probe stays false the result is already complete.
+ */
+export interface DimensionProbe {
+  needsGeometry: boolean;
+}
+
 export function parseDimensions(
   modelData: Uint8Array,
   id2pos: Map<string, [number, number, number]>,
-  instWorld: Map<string, number[] | null>
+  instWorld: Map<string, number[] | null>,
+  probe?: DimensionProbe
 ): RawDimension[] {
   const dims: RawDimension[] = [];
   const needle = new Uint8Array([0xcc, 0x5b]);
@@ -211,6 +235,7 @@ export function parseDimensions(
     const vid = tlvFindInt(fi, 0x53fd);
     const iid = tlvFindInt(fi, 0x53fe);
     if (vid === null) return null;
+    if (probe) probe.needsGeometry = true;
     const local = id2pos.get(toHex(vid));
     if (local === undefined) return null;
     if (iid !== null && iid.length >= 1 && iid[0] > 0 && 1 + iid[0] <= iid.length) {

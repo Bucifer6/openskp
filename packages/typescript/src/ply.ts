@@ -1,7 +1,6 @@
+import { writeFileEnsuringDir } from './node-io';
 import { SkpScene } from './model';
 
-declare const process: any;
-declare const require: any;
 
 function getMaterialRGBA(
   scene: SkpScene,
@@ -224,24 +223,10 @@ export function exportPLY(
   outputPath: string,
   options?: { binary?: boolean }
 ): void {
-  if (typeof process !== 'undefined' && process.versions && process.versions.node) {
-    const fs = require('fs');
-    const path = require('path');
-    const binary = options?.binary ?? false;
-
-    const dir = path.dirname(outputPath);
-    if (dir && !fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    if (binary) {
-      const data = toPLYBinary(scene);
-      fs.writeFileSync(outputPath, data);
-    } else {
-      const text = toPLYAscii(scene);
-      fs.writeFileSync(outputPath, text, 'utf-8');
-    }
-  } else {
-    throw new Error('exportPLY file writing is only supported in Node.js environment');
-  }
+  const binary = options?.binary ?? false;
+  writeFileEnsuringDir(
+    outputPath,
+    binary ? toPLYBinary(scene) : toPLYAscii(scene),
+    'exportPLY file writing'
+  );
 }

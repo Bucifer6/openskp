@@ -5,18 +5,27 @@
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
+  "bin": {
+    "openskp": "bin/openskp.cjs"
+  },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
-    }
+    },
+    "./browser": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/openskp.browser.mjs"
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "build": "tsup",
     "postbuild": "node copy-dist.js",
     "copy-dist": "node copy-dist.js",
     "test": "vitest run",

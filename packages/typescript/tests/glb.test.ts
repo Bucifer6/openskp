@@ -93,7 +93,7 @@ describe('toGLB', () => {
     expect(json.nodes.length).toBe(0);
   });
 
-  it('exports the real fixture with real UV data matching the source GlbPrimitive.uvs', () => {
+  it('exports the real fixture with real UV data matching the source GlbPrimitive.uvs, V flipped for glTF', () => {
     const filePath = path.join(__dirname, 'fixtures', 'capilla_quiroz_v17.skp');
     const buf = fs.readFileSync(filePath);
     const arrayBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
@@ -107,7 +107,9 @@ describe('toGLB', () => {
 
     // Every primitive must carry TEXCOORD_0, and the decoded values must
     // exactly match the source GlbPrimitive.uvs that fed the writer - a
-    // real round-trip check, not just "some accessor exists."
+    // real round-trip check, not just "some accessor exists." U is written
+    // as it is; V is written as 1 - V, because the scene's V runs up the
+    // image (SketchUp's convention) and glTF's runs down it.
     for (let i = 0; i < scene.glbPrimitives.length; i++) {
       const prim = scene.glbPrimitives[i];
       const attrs = meshPrimitives[i].attributes;
@@ -118,7 +120,8 @@ describe('toGLB', () => {
       expect(prim.uvs.length).toBe(uvCount * 2);
       const uvView = new DataView(binary.buffer, binary.byteOffset + uvBufferView.byteOffset);
       for (let j = 0; j < prim.uvs.length; j++) {
-        expect(uvView.getFloat32(j * 4, true)).toBeCloseTo(prim.uvs[j], 5);
+        const expected = j % 2 === 0 ? prim.uvs[j] : Math.fround(1 - prim.uvs[j]);
+        expect(uvView.getFloat32(j * 4, true)).toBe(expected);
       }
     }
   });

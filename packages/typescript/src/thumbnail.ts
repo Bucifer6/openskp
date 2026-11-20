@@ -1,8 +1,9 @@
-import { extractSkpContents } from './vff';
+import { extractSkpEntries } from './vff';
 import { isLegacy } from './legacy';
 import { SkpParseError } from './errors';
 import { ParseOptions, emitLog } from './observability';
 import { sniffImageMime } from './model';
+import { BinaryInput, toBytes } from './node-io';
 
 /**
  * The preview image SketchUp saves inside the file itself.
@@ -75,10 +76,10 @@ function readPngSize(data: Uint8Array): { width: number; height: number } | null
  * @param options - Optional progress/log callbacks
  */
 export function extractThumbnail(
-  buffer: ArrayBuffer,
+  buffer: BinaryInput,
   options?: ParseOptions
 ): SkpThumbnail | null {
-  const data = new Uint8Array(buffer);
+  const data = toBytes(buffer);
 
   if (!(data.length >= 4 && data[0] === 0xff && data[1] === 0xfe && data[2] === 0xff && data[3] === 0x0e)) {
     throw new SkpParseError('Not a valid SketchUp file (bad header magic)', { stage: 'header' });
@@ -91,9 +92,14 @@ export function extractThumbnail(
     return null;
   }
 
-  let contents;
+  // Only the thumbnail entries are decompressed: model.dat and the
+  // textures stay untouched, which is what makes this cheap on a large file.
+  let entries: Record<string, Uint8Array>;
   try {
-    contents = extractSkpContents(data, options);
+    entries = extractSkpEntries(
+      data,
+      THUMBNAIL_ENTRIES.map((e) => e.name)
+    );
   } catch (e) {
     throw new SkpParseError(`Failed to extract SKP contents: ${(e as Error).message}`, {
       stage: 'zip_extract',
@@ -102,7 +108,7 @@ export function extractThumbnail(
   }
 
   for (const { name, source } of THUMBNAIL_ENTRIES) {
-    const bytes = contents.materialFiles[name];
+    const bytes = entries[name];
     if (!bytes || bytes.length === 0) continue;
 
     const mimeType = sniffImageMime(bytes);

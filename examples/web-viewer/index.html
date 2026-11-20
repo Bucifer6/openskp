@@ -7,13 +7,11 @@
   <link rel="icon" type="image/png" href="assets/favicon.png">
   <link rel="stylesheet" href="style.css">
   
-  <!-- ESM Import Maps to resolve Three.js and parser dependencies -->
+  <!-- Import map for Three.js. The parser needs none: it runs in a worker
+       (skp-worker.js) from its self-contained browser build. -->
   <script type="importmap">
     {
       "imports": {
-        "fflate": "https://cdn.jsdelivr.net/npm/fflate@0.8.0/+esm",
-        "earcut": "https://cdn.jsdelivr.net/npm/earcut@3.0.0/+esm",
-        "flatbuffers": "https://cdn.jsdelivr.net/npm/flatbuffers@25.9.23/+esm",
         "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
         "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
       }
@@ -43,9 +41,19 @@
       </div>
       
       <div class="actions">
+        <label class="detail-control" title="How much geometry to draw. Lighter levels reduce dense components and shrink textures so large models stay smooth.">
+          <span class="detail-label">Detail</span>
+          <select id="detail-select" class="detail-select">
+            <option value="auto" selected>Auto</option>
+            <option value="full">Full</option>
+            <option value="high">High</option>
+            <option value="medium">Balanced</option>
+            <option value="low">Light</option>
+          </select>
+        </label>
         <button id="btn-load" class="btn btn-primary">
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" class="btn-icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-          Upload SKP
+          Open model
         </button>
         
         <!-- Export Multi-Format Dropdown -->
@@ -102,7 +110,7 @@
               <span class="fmt-icon">📦</span>
               <div class="fmt-info">
                 <span class="fmt-title">glTF 2.0 GLB (.glb)</span>
-                <span class="fmt-desc">Binary 3D model with PBR materials</span>
+                <span class="fmt-desc">With textures, at the detail level on screen - reopens here instantly</span>
               </div>
             </button>
             <button class="dropdown-item" data-format="obj">
@@ -116,7 +124,7 @@
         </div>
       </div>
 
-      <input type="file" id="file-input" accept=".skp" style="display: none;">
+      <input type="file" id="file-input" accept=".skp,.glb" style="display: none;">
     </header>
 
     <!-- Sidebar Left: Layers Panel -->
@@ -214,8 +222,8 @@
   <div id="drop-overlay">
     <div class="drop-overlay-content">
       <svg viewBox="0 0 24 24" width="64" height="64" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="drop-icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-      <h2>Drop your SketchUp (.skp) file</h2>
-      <p>Supports files up to SketchUp v2021/v2022 VFF format</p>
+      <h2>Drop a SketchUp (.skp) or GLB file</h2>
+      <p>Reads files saved by current SketchUp versions and by SketchUp 2013 to 2020</p>
     </div>
   </div>
 
@@ -223,7 +231,11 @@
   <div id="loading-overlay" class="hidden">
     <div class="spinner-container">
       <div class="spinner"></div>
-      <p id="loading-text">Parsing SketchUp model...</p>
+      <p id="loading-text" role="status" aria-live="polite">Reading SketchUp model...</p>
+      <div class="progress-track" id="loading-progress" hidden>
+        <div class="progress-fill" id="loading-progress-fill"></div>
+      </div>
+      <button id="btn-loading-cancel" class="btn btn-secondary" hidden>Cancel</button>
     </div>
   </div>
 
@@ -231,25 +243,27 @@
   <div id="size-warning-overlay" class="hidden">
     <div class="size-warning-content">
       <svg viewBox="0 0 24 24" width="40" height="40" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="size-warning-icon"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
-      <h2>Large file — this may freeze the tab</h2>
+      <h2>Very large file</h2>
       <p id="size-warning-message"></p>
       <p class="size-warning-note">
-        This viewer runs entirely in your browser tab, which has a fixed
-        JavaScript memory limit (typically a few GB) that can't be raised
-        from a web page. Very large or complex models can exceed it during
-        parsing, which may freeze or crash this tab rather than showing a
-        clean error. For large files, the
-        <a href="https://github.com/iamahsanmehmood/openskp#-quick-start" target="_blank" rel="noopener">Python, .NET, or Dart packages</a>
-        don't have this limitation - or try the fast WASM preview below,
-        which loads geometry only (no layers, properties, or export).
+        The model is read in the background, so this page stays usable and
+        you can cancel at any time. What cannot be changed from a web page
+        is the memory a browser allows it (typically a few GB): a model that
+        needs more stops with an error. The
+        <a href="https://github.com/iamahsanmehmood/openskp#-quick-start" target="_blank" rel="noopener">command line and the Python, .NET, or Dart packages</a>
+        have no such limit - or try the fast WASM preview below, which loads
+        geometry only (no layers, properties, or export).
       </p>
       <div class="size-warning-actions">
         <button id="btn-size-cancel" class="btn btn-secondary">Cancel</button>
-        <button id="btn-size-proceed" class="btn btn-secondary">Load anyway (full features)</button>
+        <button id="btn-size-proceed" class="btn btn-secondary">Load with full features</button>
         <button id="btn-size-wasm" class="btn btn-primary">Load fast preview (WASM)</button>
       </div>
     </div>
   </div>
+
+  <!-- Error messages: shown over the view, dismissed with a click -->
+  <div id="toast" role="alert"></div>
 
   <!-- Main Application Script -->
   <script type="module" src="viewer.js"></script>

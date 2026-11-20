@@ -1,4 +1,4 @@
-import { TlvNode, readF64, readI32, readU32, parseVarInt, parseTlvRecursive } from './parser';
+import { TlvNode, readF64, readI32, readU32, parseVarInt, parseTlvRecursive, tagAt } from './parser';
 import { ParseOptions, emitLog } from './observability';
 import { EdgeFlagStore } from './edge-flags';
 import { DefaultVertexStore, type VertexStore } from './vertex-store';
@@ -97,12 +97,16 @@ export interface ParsedDefinition {
 }
 
 export function findChildTag(nodes: TlvNode[], target: string): TlvNode | null {
-  for (const n of nodes) {
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
     if (n.tag === target) {
       return n;
     }
-    const res = findChildTag(n.children, target);
-    if (res) return res;
+    // Leaves are the vast majority of records: skip the call for them.
+    if (n.children.length > 0) {
+      const res = findChildTag(n.children, target);
+      if (res) return res;
+    }
   }
   return null;
 }
@@ -132,6 +136,7 @@ export function extractEntityId(node: TlvNode): number | null {
     }
   }
   for (const child of node.children) {
+    if (child.children.length === 0) continue;
     const res = extractEntityId(child);
     if (res !== null) return res;
   }
@@ -143,12 +148,7 @@ function tlvFlat(payload: Uint8Array): [string, Uint8Array][] {
   let pos = 0;
   const out: [string, Uint8Array][] = [];
   while (pos <= payload.length - 6) {
-    const tagBytes = payload.subarray(pos, pos + 2);
-    let tagHex = '';
-    for (let i = 0; i < 2; i++) {
-      const h = tagBytes[i].toString(16).toUpperCase();
-      tagHex += h.length === 1 ? '0' + h : h;
-    }
+    const tagHex = tagAt(payload, pos);
     const size = readU32(payload, pos + 2);
     if (pos + 6 + size > payload.length) break;
     out.push([tagHex, payload.subarray(pos + 6, pos + 6 + size)]);

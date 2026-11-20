@@ -36,6 +36,7 @@
  * template's bytes came from (disclosed plainly, exactly as Python's own
  * module docstring discloses it).
  */
+import { isNode, nodeBuiltin } from './node-io';
 import {
   loadScaffold,
   MATERIAL_INSERT_POS,
@@ -57,9 +58,6 @@ import {
 // browser too), so - like index.ts's own SkpFile.open - Node-only globals
 // used only by SkpBuilder.save() are declared `any` here rather than
 // pulled in via @types/node.
-declare const process: any;
-declare const require: any;
-declare const Buffer: any;
 
 export type Point3 = [number, number, number];
 /** Row-major 3x3 matrix, 9 values: [m00,m01,m02, m10,m11,m12, m20,m21,m22]. */
@@ -2517,11 +2515,10 @@ export class SkpBuilder {
 
   /** Write the finished file to `path` (Node.js only). */
   save(path: string): void {
-    if (typeof process === 'undefined' || !process.versions || !process.versions.node) {
+    if (!isNode()) {
       throw new Error('SkpBuilder.save is only supported in Node.js environments - use toBytes() elsewhere');
     }
-    const fs = require('fs');
-    fs.writeFileSync(path, Buffer.from(this.toBytes()));
+    nodeBuiltin('fs', 'SkpBuilder.save').writeFileSync(path, this.toBytes());
   }
 
   // -- internals used by ComponentDefinitionBuilder --

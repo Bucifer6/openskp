@@ -1,7 +1,6 @@
+import { writeFileEnsuringDir } from './node-io';
 import { SkpScene } from './model';
 
-declare const process: any;
-declare const require: any;
 
 export const METRES_TO_INCHES = 39.37007874015748;
 
@@ -340,16 +339,5 @@ export function exportIFC(
   schema: string = 'IFC4',
   classifier?: (geomName: string, layerName: string) => [string, string]
 ): void {
-  if (typeof process !== 'undefined' && process.versions && process.versions.node) {
-    const fs = require('fs');
-    const path = require('path');
-    const dir = path.dirname(outputPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    const text = toIFC(scene, scale, schema, classifier);
-    fs.writeFileSync(outputPath, text, 'utf8');
-  } else {
-    throw new Error('exportIFC is only supported in Node.js environment');
-  }
+  writeFileEnsuringDir(outputPath, toIFC(scene, scale, schema, classifier), 'exportIFC');
 }

@@ -30,11 +30,14 @@ import {
 } from './model';
 import { isLegacy, parseLegacyToRaw } from './legacy';
 import { scanVertexPositions, scanInstanceTransforms, findPageNode, parsePages, parseDimensions } from './pages-dimensions';
-import { encodeIndices } from './gltf-indices';
+import { encodeIndices, writeGltfUvs } from './gltf-indices';
 import { createGlb } from './instanced-glb';
 import { buildInstancedSceneFromParsed, InstancedScene } from './instanced';
 import { extractThumbnail, SkpThumbnail } from './thumbnail';
 import { toFragments, FragmentExportOptions } from './fragments';
+import { simplifyInstancedScene, DetailLevel } from './simplify';
+import { BinaryInput, toBytes, nodeBuiltin, writeFileEnsuringDir } from './node-io';
+import { toInstancedGLB, InstancedGlbOptions } from './instanced-glb';
 
 export * from './model';
 export type {
@@ -43,10 +46,14 @@ export type {
   InstancedMeshResource,
   LocalPrimitive,
 } from './instanced';
-export { toInstancedGLB } from './instanced-glb';
+export { toInstancedGLB };
 export { toFragments, fromFragments } from './fragments';
 export type { FragmentExportOptions } from './fragments';
 export { extractThumbnail } from './thumbnail';
+export { simplifyInstancedScene };
+export type { SimplifyOptions, SimplifyStats, DetailLevel } from './simplify';
+export { decodeTiff, encodePng, convertTextureToPng } from './image-convert';
+export type { DecodedImage } from './image-convert';
 export type { SkpThumbnail } from './thumbnail';
 export type { InstancedGlbOptions } from './instanced-glb';
 export * from './errors';
@@ -81,12 +88,11 @@ export type {
   AddImageOptions,
 } from './create';
 export { openExisting } from './edit';
-
-declare const process: any;
-declare const require: any;
+export { isNode } from './node-io';
+export type { BinaryInput } from './node-io';
 
 /**
- * Parse a SketchUp (.skp) file from an ArrayBuffer into its raw,
+ * Parse a SketchUp (.skp) file from its bytes into its raw,
  * source-agnostic form - shared by parseSkp() (the light public model) and
  * buildScene() (the opt-in, heavier triangulated-scene builder), so neither
  * one pays for work only the other needs.
@@ -94,9 +100,9 @@ declare const require: any;
  * Transparently handles both the modern VFF/ZIP container (SketchUp 2021+)
  * and the classic pre-2021 MFC CArchive container (SketchUp 2013-2020).
  */
-function parseToRaw(buffer: ArrayBuffer, options?: ParseOptions): ParsedRawData {
+function parseToRaw(buffer: BinaryInput, options?: ParseOptions): ParsedRawData {
   const t0 = Date.now();
-  const data = new Uint8Array(buffer);
+  const data = toBytes(buffer);
   emitLog(options, 'info', `Parsing buffer (${data.length} bytes)`);
 
   // Both the legacy (pre-2021 MFC) and modern (VFF/ZIP) containers share
@@ -265,13 +271,22 @@ function parseToRaw(buffer: ArrayBuffer, options?: ParseOptions): ParsedRawData 
   const instanceWorld = new Map<string, number[] | null>();
   let pageNode: TlvNode | null = null;
 
+  // Dimensions attached to geometry are placed by looking up vertices and
+  // instances by id, which needs a table of every one in the file. Find
+  // out first whether any dimension asks for that: a model with none (the
+  // usual case) then skips building the tables altogether.
+  const dimensionProbe = { needsGeometry: false };
+  let dimensions = parseDimensions(modelData, vertexPositions, instanceWorld, dimensionProbe);
+
   for (const { index, total, node: el } of iterTopLevelLazy(modelData, 0, modelData.length)) {
     try {
       collectLayers([el], layerIdToName, options, layerHidden);
       collectMaterialIds([el]);
       collectDefs([el], defsDict, options);
-      scanVertexPositions(el, vertexPositions);
-      scanInstanceTransforms(el, instanceWorld);
+      if (dimensionProbe.needsGeometry) {
+        scanVertexPositions(el, vertexPositions);
+        scanInstanceTransforms(el, instanceWorld);
+      }
       if (pageNode === null) {
         pageNode = findPageNode(el);
       }
@@ -311,6 +326,10 @@ function parseToRaw(buffer: ArrayBuffer, options?: ParseOptions): ParsedRawData 
     layerHidden.set('Layer0', false);
   }
 
+  if (dimensionProbe.needsGeometry) {
+    dimensions = parseDimensions(modelData, vertexPositions, instanceWorld);
+  }
+
   defsDict.set('ROOT', {
     guid: 'ROOT',
     name: 'ROOT_MODEL',
@@ -328,7 +347,7 @@ function parseToRaw(buffer: ArrayBuffer, options?: ParseOptions): ParsedRawData 
     layerHidden,
     layerIdToName,
     pages: parsePages(pageNode),
-    dimensions: parseDimensions(modelData, vertexPositions, instanceWorld),
+    dimensions,
     materialIdToName,
     materialsMap,
     materialsByFolder,
@@ -350,11 +369,12 @@ function parseToRaw(buffer: ArrayBuffer, options?: ParseOptions): ParsedRawData 
  * step, since baking every placed instance can produce far more data than
  * the file's raw geometry.
  *
- * @param buffer - The raw file contents as an ArrayBuffer
+ * @param buffer - The raw file contents: an ArrayBuffer, a typed array or a
+ *   Node.js Buffer. Views are read in place, never copied.
  * @param options - Optional progress/log callbacks (see {@link ParseOptions})
  * @returns Parsed SkpModel with full geometry and metadata
  */
-export function parseSkp(buffer: ArrayBuffer, options?: ParseOptions): SkpModel {
+export function parseSkp(buffer: BinaryInput, options?: ParseOptions): SkpModel {
   return buildModelFromParsed(parseToRaw(buffer, options));
 }
 
@@ -372,7 +392,7 @@ export function parseSkp(buffer: ArrayBuffer, options?: ParseOptions): SkpModel 
  * @param options - Optional progress/log callbacks (see {@link ParseOptions})
  */
 export function buildScene(
-  buffer: ArrayBuffer,
+  buffer: BinaryInput,
   options?: ParseOptions & SceneOptions
 ): SkpScene {
   return buildSceneFromParsed(parseToRaw(buffer, options), options);
@@ -404,11 +424,12 @@ export function buildScene(
  * raw TLV data, consistent with the existing two-tier API, so callers who
  * never ask for it never pay for it.
  *
- * @param buffer - The raw file contents as an ArrayBuffer
+ * @param buffer - The raw file contents: an ArrayBuffer, a typed array or a
+ *   Node.js Buffer. Views are read in place, never copied.
  * @param options - Optional progress/log callbacks (see {@link ParseOptions})
  */
 export function buildInstancedScene(
-  buffer: ArrayBuffer,
+  buffer: BinaryInput,
   options?: ParseOptions & SceneOptions
 ): InstancedScene {
   return buildInstancedSceneFromParsed(parseToRaw(buffer, options), options);
@@ -510,7 +531,7 @@ export function toGLB(scene: SkpScene, options?: GlbOptions): Uint8Array {
     byteOffset += prim.normals.byteLength;
 
     const uvByteOffset = byteOffset;
-    binaryBuffer.set(new Uint8Array(prim.uvs.buffer, prim.uvs.byteOffset, prim.uvs.byteLength), uvByteOffset);
+    writeGltfUvs(binaryBuffer, uvByteOffset, prim.uvs);
     byteOffset += prim.uvs.byteLength;
 
     const encoded = encodedIndices[primIndex];
@@ -796,36 +817,89 @@ export function toJSON(model: SkpModel, scene?: SkpScene): Record<string, unknow
 }
 
 /**
- * SkpFile wrapper class.
+ * Everything a viewer needs from one read of a file: the light model and
+ * the instanced scene, see {@link loadSkp}.
+ */
+export interface LoadedSkp {
+  model: SkpModel;
+  scene: InstancedScene;
+}
+
+/**
+ * Parse a file once and return both the light {@link SkpModel} and the
+ * {@link InstancedScene}.
+ *
+ * {@link parseSkp} and {@link buildInstancedScene} are independent by
+ * design, so a caller wanting both walks the file twice. That is the right
+ * trade for a caller who wants one of them, and the wrong one for a viewer,
+ * which always wants the scene to draw and the model for its version, units,
+ * layers and pages: the walk is most of the cost, and on a large model it
+ * is tens of seconds.
+ *
+ * @param buffer - The raw file contents
+ * @param options - Optional progress/log callbacks and scene options
+ */
+export function loadSkp(buffer: BinaryInput, options?: ParseOptions & SceneOptions): LoadedSkp {
+  const raw = parseToRaw(buffer, options);
+  const model = buildModelFromParsed(raw);
+  const scene = buildInstancedSceneFromParsed(raw, options);
+  return { model, scene };
+}
+
+/**
+ * A `.skp` file's bytes, with the readers and converters as methods.
+ *
+ * Holds the bytes only - every method reads them afresh - so keeping one
+ * around costs the file's size and nothing more.
  */
 export class SkpFile {
-  private buffer: ArrayBuffer;
+  private bytes: Uint8Array;
 
-  constructor(buffer: ArrayBuffer) {
-    this.buffer = buffer;
+  /** @param buffer - An ArrayBuffer, a typed array or a Node.js Buffer.
+   *   A view is kept as is, not copied, so the bytes must stay unchanged. */
+  constructor(buffer: BinaryInput) {
+    this.bytes = toBytes(buffer);
   }
 
-  static fromBuffer(buffer: ArrayBuffer): SkpFile {
+  static fromBuffer(buffer: BinaryInput): SkpFile {
     return new SkpFile(buffer);
   }
 
-  static open(filePath: string): SkpFile {
-    if (typeof process !== 'undefined' && process.versions && process.versions.node) {
-      const fs = require('fs');
-      const path = require('path');
-      if (!fs.existsSync(filePath)) {
-        throw new Error(`File not found: ${filePath}`);
-      }
-      const ext = path.extname(filePath);
-      if (ext.toLowerCase() !== '.skp') {
-        throw new Error(`Expected a .skp file, got: ${ext}`);
-      }
-      const buffer = fs.readFileSync(filePath);
-      const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-      return new SkpFile(arrayBuffer);
-    } else {
-      throw new Error('SkpFile.open is only supported in Node.js environment');
+  /** The file size in bytes. */
+  get byteLength(): number {
+    return this.bytes.byteLength;
+  }
+
+  private static checkPath(filePath: string, fs: any, path: any): void {
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`File not found: ${filePath}`);
     }
+    const ext = path.extname(filePath);
+    if (ext.toLowerCase() !== '.skp') {
+      throw new Error(`Expected a .skp file, got: ${ext}`);
+    }
+  }
+
+  /** Read a `.skp` file from disk. Node.js only; works the same from
+   * `import` and from `require`. */
+  static open(filePath: string): SkpFile {
+    const fs = nodeBuiltin('fs', 'SkpFile.open');
+    const path = nodeBuiltin('path', 'SkpFile.open');
+    SkpFile.checkPath(filePath, fs, path);
+    // The Buffer is used in place. Slicing its ArrayBuffer, as this used
+    // to, held two copies of the file in memory while it was read.
+    return new SkpFile(fs.readFileSync(filePath));
+  }
+
+  /** {@link SkpFile.open} without blocking the event loop while the file
+   * is read - for servers and tools that read many or large models.
+   * Parsing itself is still synchronous: run it in a worker thread to keep
+   * a server responsive. Node.js only. */
+  static async openAsync(filePath: string): Promise<SkpFile> {
+    const fs = nodeBuiltin('fs', 'SkpFile.openAsync');
+    const path = nodeBuiltin('path', 'SkpFile.openAsync');
+    SkpFile.checkPath(filePath, fs, path);
+    return new SkpFile(await fs.promises.readFile(filePath));
   }
 
   /** Fast, memory-light parse: raw per-definition geometry, no scene-graph
@@ -833,7 +907,7 @@ export class SkpFile {
    * world-space scene ready for rendering or GLB export.
    * @param options - Optional progress/log callbacks (see {@link ParseOptions}) */
   parse(options?: ParseOptions): SkpModel {
-    return parseSkp(this.buffer, options);
+    return parseSkp(this.bytes, options);
   }
 
   /** Bake every placed instance into world-space, triangulated mesh data.
@@ -842,7 +916,7 @@ export class SkpFile {
    * for this heavier computation.
    * @param options - Optional progress/log callbacks (see {@link ParseOptions}) */
   buildScene(options?: ParseOptions & SceneOptions): SkpScene {
-    return buildScene(this.buffer, options);
+    return buildScene(this.bytes, options);
   }
 
   /** Build the placed scene graph with instancing PRESERVED: unique
@@ -850,7 +924,41 @@ export class SkpFile {
    * {@link buildInstancedScene} for when to prefer this over buildScene().
    * @param options - Optional progress/log callbacks (see {@link ParseOptions}) */
   buildInstancedScene(options?: ParseOptions & SceneOptions): InstancedScene {
-    return buildInstancedScene(this.buffer, options);
+    return buildInstancedScene(this.bytes, options);
+  }
+
+  /** The model and the instanced scene from a single read of the file.
+   * See {@link loadSkp}.
+   * @param options - Optional progress/log callbacks and scene options */
+  load(options?: ParseOptions & SceneOptions): LoadedSkp {
+    return loadSkp(this.bytes, options);
+  }
+
+  /** Convert to GLB (binary glTF 2.0).
+   *
+   * Instanced by default: a component placed many times is stored once and
+   * referenced, which is both smaller and faster to build than baking a
+   * copy per placement. Pass `instanced: false` for the baked, single-mesh
+   * layout {@link toGLB} produces, or `detail` for a lighter file meant
+   * for viewing (see {@link simplifyInstancedScene}).
+   * @param options - `instanced` (default true), plus the options of
+   *   {@link toInstancedGLB} or {@link toGLB}, and progress/log callbacks */
+  toGLB(options?: SkpFileGlbOptions): Uint8Array {
+    if (options?.instanced === false) {
+      return toGLB(this.buildScene(options), options);
+    }
+    let scene = this.buildInstancedScene(options);
+    if (options?.detail) scene = simplifyInstancedScene(scene, { detail: options.detail }).scene;
+    return toInstancedGLB(scene, options);
+  }
+
+  /** Convert to GLB and write it to `outputPath`, creating the directory
+   * if it is missing. Node.js only. See {@link SkpFile.toGLB}.
+   * @returns The number of bytes written */
+  exportGLB(outputPath: string, options?: SkpFileGlbOptions): number {
+    const glb = this.toGLB(options);
+    writeFileEnsuringDir(outputPath, glb, 'SkpFile.exportGLB');
+    return glb.byteLength;
   }
 
   /** Convert to ThatOpen Fragments (.frag) binary format.
@@ -864,6 +972,19 @@ export class SkpFile {
    * none. Cheap: reads container metadata only, never geometry.
    * @param options - Optional progress/log callbacks */
   thumbnail(options?: ParseOptions): SkpThumbnail | null {
-    return extractThumbnail(this.buffer, options);
+    return extractThumbnail(this.bytes, options);
   }
 }
+
+/** Options for {@link SkpFile.toGLB} and {@link SkpFile.exportGLB}. */
+export type SkpFileGlbOptions = {
+  /** Keep SketchUp's instancing in the GLB (default true). */
+  instanced?: boolean;
+  /** Write a lighter model: dense components reduced and, below `'high'`,
+   * very small objects left out. See {@link simplifyInstancedScene}.
+   * Instanced GLBs only; omit to keep every triangle. */
+  detail?: DetailLevel;
+} & InstancedGlbOptions &
+  GlbOptions &
+  ParseOptions &
+  SceneOptions;
