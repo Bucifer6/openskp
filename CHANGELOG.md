@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — TypeScript: placement ids in the baked scene
+
+- `MeshMetadata.placementIds` lists the placements a baked mesh sits in, outermost first, and
+  `InstanceNode.placementId` gives each placement its number. A mesh's `path` names placements by
+  instance or definition name, so two placements of the same component (two identical chairs)
+  shared one path and a viewer could not pick, highlight or move one of them alone.
+
 ### Fixed — TypeScript: mirrored placements were inside out in the baked scene
 
 - `buildScene` transformed a mirrored instance's vertices (a negative-determinant transform: a

@@ -350,6 +350,8 @@ export interface Material {
 }
 
 export interface InstanceNode {
+  /** This placement's number, unique within the scene (see MeshMetadata.placementIds). */
+  placementId?: number;
   name: string;
   /** Whether `name` is a synthetic fallback (SketchUp's own internal
    * index, e.g. "Component_5") rather than a real name from the source
@@ -384,6 +386,15 @@ export interface MeshMetadata {
   /** See InstanceNode.attributeDictionaries. */
   attributeDictionaries: Record<string, Record<string, string>>;
   path: string;
+  /**
+   * The placements this mesh sits in, outermost first: each one's
+   * {@link InstanceNode.placementId}. Unlike `path`, which names a placement
+   * by its instance or definition name, these tell two placements of the
+   * same component apart (two identical chairs share a path but not these),
+   * so a viewer can pick, highlight or move one placed object on its own.
+   * Empty for geometry drawn at the model's root.
+   */
+  placementIds: number[];
 }
 
 /** One triangulated, world-space mesh: all faces (or, for a face whose
@@ -983,7 +994,8 @@ export function buildSceneFromParsed(
     currentMatrix: number[],
     parentLayer: string = 'Layer0',
     pathName: string = 'ROOT',
-    inheritedMaterial?: Material
+    inheritedMaterial?: Material,
+    placementIds: number[] = []
   ): InstanceNode[] {
     const d = defsDict.get(defId);
     if (!d) return [];
@@ -1046,6 +1058,7 @@ export function buildSceneFromParsed(
           properties: {},
           attributeDictionaries: {},
           path: pathName,
+          placementIds,
         };
 
         const scale = 0.0254;
@@ -1180,6 +1193,7 @@ export function buildSceneFromParsed(
       const instName = inst.name || `Component_${refIdx}`;
       const fullPathName = `${pathName} / ${instName}`;
       instanceCounter.count++;
+      const placementId = instanceCounter.count;
       if (instanceCounter.count % PROGRESS_INTERVAL === 0) {
         emitProgress(options, 'build_scene', instanceCounter.count, instanceCounter.count);
         emitLog(options, 'debug', `Processed ${instanceCounter.count} placed instances`);
@@ -1191,7 +1205,7 @@ export function buildSceneFromParsed(
         });
       }
       activeDefinitions.add(refIdx);
-      const childNodes = instantiate(refIdx, newMatrix, lName, fullPathName, instMaterial);
+      const childNodes = instantiate(refIdx, newMatrix, lName, fullPathName, instMaterial, [...placementIds, placementId]);
       activeDefinitions.delete(refIdx);
 
       const tx = (newMatrix[9] ?? 0) * 25.4;
@@ -1232,6 +1246,7 @@ export function buildSceneFromParsed(
       }
 
       const instInfo: InstanceNode = {
+        placementId,
         name: displayName,
         nameIsGenerated,
         definitionName: childDefName,
