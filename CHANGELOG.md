@@ -7,15 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed — TypeScript: textures in exported GLB files were upside down
+### Fixed — TypeScript, .NET, Dart, C++, Rust: textures in exported GLB files were upside down
 
-- `toGLB` and `toInstancedGLB` wrote texture coordinates as the scene holds them, in SketchUp's
-  convention (V runs up the image, origin bottom-left). glTF's V runs down from the top-left, so
-  every textured face showed its image vertically flipped in a reader that follows the
-  specification. A tiling wood or brick hides that; a label, a poster or a sign does not. V is now
-  written as `1 - V`. Scene data (`GlbPrimitive.uvs`, `LocalPrimitive.uvs`) is unchanged, and the
-  web viewer was already right. **The other four ports write GLB the same way the TypeScript one
-  did and still need this fix.**
+- The GLB writers in these five ports wrote texture coordinates as the scene holds them, in
+  SketchUp's convention (V runs up the image, origin bottom-left). glTF's V runs down from the
+  top-left, so every textured face showed its image vertically flipped in a reader that follows
+  the specification. A tiling wood or brick hides that; a label, a poster or a sign does not. V
+  is now written as `1 - V`, in both the baked and the instanced GLB of each port. Scene data
+  (`GlbPrimitive.uvs`, `LocalPrimitive.uvs` and their equivalents) is unchanged.
+- Python was already right - it exports through trimesh, which makes this conversion itself -
+  and is what the others were checked against: a wall textured bottom-to-top comes out of the
+  Python exporter with V = 0 at its top edge, as it now does from the TypeScript one.
 
 ### Fixed — TypeScript: file helpers threw under `import`
 

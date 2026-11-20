@@ -90,6 +90,9 @@ namespace OpenSkp.Tests
             var uvBufferView = json.GetProperty("bufferViews")[uvAccessor.GetProperty("bufferView").GetInt32()];
             var uvOffset = uvBufferView.GetProperty("byteOffset").GetInt32();
             Assert.Equal(1.0f, BitConverter.ToSingle(binary, uvOffset + 2 * 4));
+            // V is written as 1 - V: the scene's runs up the image, glTF's down it.
+            Assert.Equal(1.0f, BitConverter.ToSingle(binary, uvOffset + 1 * 4));
+            Assert.Equal(0.0f, BitConverter.ToSingle(binary, uvOffset + 5 * 4));
 
             var materials = json.GetProperty("materials");
             var pbr = materials[0].GetProperty("pbrMetallicRoughness");
@@ -171,7 +174,8 @@ namespace OpenSkp.Tests
                 // Every primitive must carry TEXCOORD_0, and the decoded
                 // values must exactly match the source GlbPrimitive.Uvs
                 // that fed the writer - a real round-trip check, not
-                // just "some accessor exists."
+                // just "some accessor exists." U is written as it is and
+                // V as 1 - V (glTF's V runs down the image).
                 for (var i = 0; i < scene.GlbPrimitives.Count; i++)
                 {
                     var prim = scene.GlbPrimitives[i];
@@ -184,7 +188,8 @@ namespace OpenSkp.Tests
                     Assert.Equal(prim.Uvs.Length, uvCount * 2);
                     for (var j = 0; j < prim.Uvs.Length; j++)
                     {
-                        Assert.Equal(prim.Uvs[j], BitConverter.ToSingle(binary, uvOffset + j * 4));
+                        var expectedUv = (j & 1) == 1 ? 1f - prim.Uvs[j] : prim.Uvs[j];
+                        Assert.Equal(expectedUv, BitConverter.ToSingle(binary, uvOffset + j * 4));
                     }
                 }
             }

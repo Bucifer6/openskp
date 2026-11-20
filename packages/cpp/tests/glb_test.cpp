@@ -95,6 +95,9 @@ TEST(Glb, SerializesSceneAndBinaryData) {
   EXPECT_EQ(uvs.type, TINYGLTF_TYPE_VEC2);
   EXPECT_EQ(uvs.count, 3);
   EXPECT_FLOAT_EQ(buffer_value<float>(model, uvs, 2), 1.0F);
+  // V is written as 1 - V: the scene's runs up the image, glTF's down it.
+  EXPECT_FLOAT_EQ(buffer_value<float>(model, uvs, 1), 1.0F);
+  EXPECT_FLOAT_EQ(buffer_value<float>(model, uvs, 5), 0.0F);
 
   const auto& indices = model.accessors.at(static_cast<std::size_t>(primitive.indices));
   EXPECT_EQ(indices.componentType, TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT);
